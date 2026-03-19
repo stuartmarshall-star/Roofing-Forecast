@@ -163,12 +163,14 @@
     <button class="tab active" onclick="showTab('jobs')">All jobs</button>
     <button class="tab" onclick="showTab('actuals')">Enter actuals</button>
     <button class="tab" onclick="showTab('liabilities')">Liabilities</button>
+    <button class="tab" onclick="showTab('retentions')">Retentions</button>
     <button class="tab" onclick="showTab('forecast')">Forecast</button>
   </div>
 
   <div id="jobs" class="section active"><div class="empty-state">Connecting...</div></div>
   <div id="actuals" class="section"></div>
   <div id="liabilities" class="section"></div>
+  <div id="retentions" class="section"></div>
   <div id="forecast" class="section">
     <div style="display:flex;flex-wrap:wrap;align-items:flex-end;gap:16px;margin-bottom:1.25rem;background:#fff;border:1px solid #e8e8e8;border-radius:10px;padding:1rem 1.25rem;">
       <div>
@@ -250,17 +252,18 @@
       <div><label>Materials</label><input type="number" id="f-materials" placeholder="0"></div>
       <div><label>Overhead / Other</label><input type="number" id="f-overhead" placeholder="0"></div>
     </div>
-    <div class="sub-label">Billing</div>
+    <div class="sub-label">Retention</div>
     <div class="form-grid">
       <div><label>Retention % held by client</label><input type="number" id="f-retention" value="5" min="0" max="100"></div>
-      <div><label>Defects period end month</label><input type="month" id="f-defects-end" title="Month the defects liability period ends"></div>
-      <div><label>Second moiety release</label>
+      <div><label>Defects period</label>
         <select id="f-moiety">
-          <option value="12">12 months after defects end</option>
-          <option value="24">24 months after defects end</option>
+          <option value="12">12 months</option>
+          <option value="24">24 months</option>
         </select>
       </div>
+      <div></div>
     </div>
+    <div style="font-size:12px;color:#888;margin-bottom:1rem;margin-top:-6px">First 50% released on job completion. Balance released at end of defects period.</div>
     <div class="modal-footer">
       <button class="btn" onclick="closeModal()">Cancel</button>
       <button class="btn btn-primary" onclick="saveJob()">Save job</button>
@@ -293,6 +296,9 @@ const CORRECT_PIN = '1976';
   -- Run this to add retention release columns to existing jobs table:
   alter table jobs add column if not exists defects_end text;
   alter table jobs add column if not exists moiety integer default 12;
+  alter table jobs add column if not exists retention_releases jsonb default '{"m1":false,"m2":false}';
+  alter table jobs add column if not exists retention_received_dates jsonb default '{}';
+  alter table jobs add column if not exists retention_invoice_dates jsonb default '{}';
 */
 
 let pinEntry = '';
@@ -379,8 +385,10 @@ function dbToJob(row) {
     contract: parseFloat(row.contract) || 0, labour: parseFloat(row.labour) || 0,
     materials: parseFloat(row.materials) || 0, overhead: parseFloat(row.overhead) || 0,
     retention: parseFloat(row.retention) || 0,
-    defectsEnd: row.defects_end || null,
     moiety: parseInt(row.moiety) || 12,
+    retentionReleases: row.retention_releases || { m1: false, m2: false },
+    retentionReceivedDates: row.retention_received_dates || {},
+    retentionInvoiceDates: row.retention_invoice_dates || {},
     actuals: row.actuals || {}
   };
 }
@@ -390,7 +398,10 @@ function jobToDb(j) {
     name: j.name, client: j.client, status: j.status, start_month: j.start,
     duration: j.dur, contract: j.contract, labour: j.labour,
     materials: j.materials, overhead: j.overhead, retention: j.retention,
-    defects_end: j.defectsEnd || null, moiety: j.moiety || 12,
+    moiety: j.moiety || 12,
+    retention_releases: j.retentionReleases || { m1: false, m2: false },
+    retention_received_dates: j.retentionReceivedDates || {},
+    retention_invoice_dates: j.retentionInvoiceDates || {},
     actuals: j.actuals
   };
 }
@@ -567,16 +578,16 @@ function getRetentionTotal(job) {
 }
 
 function getFirstMoietyMonth(job) {
-  // Released at practical completion = last month of project
+  // 1st 50% released on job completion = last month of project
   if (!job.start || !job.dur) return null;
   const months = getMonths(job.start, job.dur);
   return months[months.length - 1];
 }
 
 function getSecondMoietyMonth(job) {
-  // Released moiety months after defects end (or after job end if no defects end set)
-  if (!job.start || !job.dur) return null;
-  const base = job.defectsEnd || getFirstMoietyMonth(job);
+  // 2nd 50% released at end of defects period (12 or 24 months after job completion)
+  const base = getFirstMoietyMonth(job);
+  if (!base) return null;
   return addMonths(base, job.moiety || 12);
 }
 
@@ -615,6 +626,18 @@ function getTotalRetentionReleaseForMonth(month) {
 // Total retention held per month across all jobs
 function getTotalRetentionHeldForMonth(month) {
   return jobs.reduce((sum, j) => sum + getRetentionHeldPerMonth(j, month), 0);
+}
+
+// Returns total retention cash actually received in a given month (based on marked-received date)
+function getRetentionReceivedForMonth(month) {
+  return jobs.reduce((sum, j) => {
+    const half = getRetentionTotal(j) / 2;
+    const rr = j.retentionReleases || {};
+    const rd = j.retentionReceivedDates || {};
+    if (rr.m1 && rd.m1 === month) sum += half;
+    if (rr.m2 && rd.m2 === month) sum += half;
+    return sum;
+  }, 0);
 }
 
 // ── Liability helpers ────────────────────────────────────────────────────────
@@ -797,26 +820,25 @@ async function deleteLiability(idx) {
 }
 
 function renderMetrics() {
-  let tContract=0, tCost=0, tRetention=0, active=0;
+  let tContract=0, tCost=0, active=0, totalHeld=0, totalReleased=0;
   jobs.forEach(j => {
     tContract += j.contract; tCost += j.labour + j.materials + j.overhead;
     if (j.status === 'active') active++;
-    tRetention += getRetentionTotal(j);
+    const half = getRetentionTotal(j) / 2;
+    totalHeld += getRetentionTotal(j);
+    if (j.retentionReleases && j.retentionReleases.m1) totalReleased += half;
+    if (j.retentionReleases && j.retentionReleases.m2) totalReleased += half;
   });
   const margin = tContract > 0 ? (tContract - tCost) / tContract * 100 : 0;
-  // Work out released vs outstanding retention
-  const cur = getCurrentMonth();
-  let retReleased = 0;
-  jobs.forEach(j => {
-    const sched = getRetentionReleaseSchedule(j);
-    Object.entries(sched).forEach(([m, v]) => { if (m <= cur) retReleased += v; });
-  });
-  const retOutstanding = tRetention - retReleased;
+  const retOutstanding = totalHeld - totalReleased;
   document.getElementById('metrics').innerHTML = `
     <div class="metric"><div class="metric-label">Active jobs</div><div class="metric-value">${active}</div></div>
     <div class="metric"><div class="metric-label">Total contracted</div><div class="metric-value">${fmt(tContract)}</div></div>
     <div class="metric"><div class="metric-label">Forecast margin</div><div class="metric-value ${margin >= 15 ? 'green' : 'red'}">${fmtPct(margin)}</div></div>
-    <div class="metric"><div class="metric-label">Retention outstanding</div><div class="metric-value red">${fmt(retOutstanding)}</div></div>`;
+    <div class="metric" style="cursor:pointer" onclick="showTab('retentions')" title="Click to view retentions">
+      <div class="metric-label">Retention outstanding ↗</div>
+      <div class="metric-value red">${fmt(retOutstanding)}</div>
+    </div>`;
   document.getElementById('period-label').textContent = 'As of ' + monthLabel(getCurrentMonth());
 }
 
@@ -1088,20 +1110,34 @@ function renderForecastSection() {
   if (rangeEl) rangeEl.textContent = monthLabel(allMonths[0]) + ' – ' + monthLabel(allMonths[allMonths.length - 1]) + ' (' + allMonths.length + ' months)';
 
   const rows = allMonths.map(m => {
-    let tL=0,tM=0,tO=0,tB=0;
+    let tL=0, tM=0, tO=0, tGrossBilling=0, tRetHeld=0;
     jobs.forEach(j => {
       const ms = getMonths(j.start, j.dur); if (!ms.includes(m)) return;
-      tL+=buildSchedule(j,'labour')[m].value; tM+=buildSchedule(j,'materials')[m].value;
-      tO+=buildSchedule(j,'overhead')[m].value; tB+=buildSchedule(j,'billing')[m].value;
+      tL += buildSchedule(j,'labour')[m].value;
+      tM += buildSchedule(j,'materials')[m].value;
+      tO += buildSchedule(j,'overhead')[m].value;
+      // Gross billing per month = contract / duration (evenly spread), adjusted by actuals
+      const grossPerMonth = j.contract / j.dur;
+      const retPerMonth = grossPerMonth * (j.retention / 100);
+      // Use net billing schedule value + add retention back to get gross
+      const netBilling = buildSchedule(j,'billing')[m].value;
+      const grossBilling = netBilling + retPerMonth;
+      tGrossBilling += grossBilling;
+      tRetHeld += retPerMonth;
     });
-    const tC = tL+tM+tO;
+    const tC = tL + tM + tO;
     const tLiab = getTotalLiabilitiesForMonth(m);
-    const tRetHeld = getTotalRetentionHeldForMonth(m);
-    const tRetRelease = getTotalRetentionReleaseForMonth(m);
-    // Net cash = billing received (less retention held) + retention releases - costs - liabilities
-    const cash = (tB - tRetHeld) + tRetRelease - tC - tLiab;
-    return {m, tL, tM, tO, tC, tB, tLiab, tRetHeld, tRetRelease, cash};
+    const tRetReceived = getRetentionReceivedForMonth(m);
+    // Net billing received = gross billing - retention held this month
+    const tNetBilling = tGrossBilling - tRetHeld;
+    // Operating cashflow = net billing + retention received - costs - liabilities
+    const cash = tNetBilling + tRetReceived - tC - tLiab;
+    return {m, tL, tM, tO, tC, tGrossBilling, tRetHeld, tNetBilling, tLiab, tRetReceived, cash};
   });
+
+  // Add cumulative cash
+  let cumulative = 0;
+  rows.forEach(r => { cumulative += r.cash; r.cumCash = cumulative; });
 
   if (forecastChartInst) { forecastChartInst.destroy(); forecastChartInst = null; }
 
@@ -1110,14 +1146,16 @@ function renderForecastSection() {
 
   contentEl.innerHTML = `
     <div style="display:flex;gap:12px;font-size:12px;color:#888;margin-bottom:.75rem;flex-wrap:wrap;align-items:center">
-      <span style="display:flex;align-items:center;gap:5px"><span style="width:12px;height:12px;border-radius:2px;background:rgba(22,163,74,0.75);display:inline-block"></span>Billing (net of retention)</span>
+      <span style="display:flex;align-items:center;gap:5px"><span style="width:12px;height:12px;border-radius:2px;background:rgba(22,163,74,0.75);display:inline-block"></span>Net billing</span>
+      <span style="display:flex;align-items:center;gap:5px"><span style="width:12px;height:12px;border-radius:2px;background:rgba(15,118,110,0.75);display:inline-block"></span>Retention received</span>
       <span style="display:flex;align-items:center;gap:5px"><span style="width:12px;height:12px;border-radius:2px;background:rgba(220,38,38,0.75);display:inline-block"></span>Labour</span>
       <span style="display:flex;align-items:center;gap:5px"><span style="width:12px;height:12px;border-radius:2px;background:rgba(234,88,12,0.75);display:inline-block"></span>Materials</span>
       <span style="display:flex;align-items:center;gap:5px"><span style="width:12px;height:12px;border-radius:2px;background:rgba(202,138,4,0.75);display:inline-block"></span>Overhead</span>
       <span style="display:flex;align-items:center;gap:5px"><span style="width:12px;height:12px;border-radius:2px;background:rgba(109,40,217,0.65);display:inline-block"></span>Liabilities</span>
-      <span style="display:flex;align-items:center;gap:5px"><span style="width:12px;height:12px;border-radius:2px;background:rgba(15,118,110,0.75);display:inline-block"></span>Retention release</span>
-      <span style="display:flex;align-items:center;gap:5px"><span style="width:24px;height:2px;background:#1d4ed8;display:inline-block"></span>Net cashflow</span>
+      <span style="display:flex;align-items:center;gap:5px"><span style="width:24px;height:2px;background:#1d4ed8;display:inline-block"></span>Monthly cashflow</span>
+      <span style="display:flex;align-items:center;gap:5px"><span style="width:24px;height:2px;background:#7c3aed;border-top:2px dashed #7c3aed;display:inline-block"></span>Cumulative cash</span>
     </div>
+    <div style="font-size:12px;color:#888;margin-bottom:1rem">Retention deducted from billing until marked received in the <button onclick="showTab('retentions')" style="background:none;border:none;color:#1d4ed8;cursor:pointer;font-size:12px;padding:0;text-decoration:underline">Retentions tab</button>.</div>
     <div style="position:relative;width:100%;height:${chartH}px;margin-bottom:1.5rem"><canvas id="forecastChart"></canvas></div>
     <div id="ftable"></div>`;
 
@@ -1126,13 +1164,14 @@ function renderForecastSection() {
     data: {
       labels: allMonths.map(monthLabel),
       datasets: [
-        { label: 'Billing (net)', data: rows.map(r => Math.round(r.tB - r.tRetHeld)), backgroundColor: 'rgba(22,163,74,0.75)',  borderRadius: 3 },
-        { label: 'Labour',        data: rows.map(r => Math.round(r.tL)),              backgroundColor: 'rgba(220,38,38,0.75)',  borderRadius: 3 },
-        { label: 'Materials',     data: rows.map(r => Math.round(r.tM)),              backgroundColor: 'rgba(234,88,12,0.75)',  borderRadius: 3 },
-        { label: 'Overhead',      data: rows.map(r => Math.round(r.tO)),              backgroundColor: 'rgba(202,138,4,0.75)',  borderRadius: 3 },
-        { label: 'Liabilities',   data: rows.map(r => Math.round(r.tLiab)),           backgroundColor: 'rgba(109,40,217,0.65)', borderRadius: 3 },
-        { label: 'Retention release', data: rows.map(r => Math.round(r.tRetRelease)), backgroundColor: 'rgba(15,118,110,0.75)', borderRadius: 3 },
-        { label: 'Net cashflow',  data: rows.map(r => Math.round(r.cash)), type: 'line', borderColor: '#1d4ed8', backgroundColor: 'transparent', borderWidth: 2, pointRadius: allMonths.length > 18 ? 2 : 3, tension: 0.3, order: 0 }
+        { label: 'Net billing',        data: rows.map(r => Math.round(r.tNetBilling)),    backgroundColor: 'rgba(22,163,74,0.75)',  borderRadius: 3 },
+        { label: 'Retention received', data: rows.map(r => Math.round(r.tRetReceived)),   backgroundColor: 'rgba(15,118,110,0.75)', borderRadius: 3 },
+        { label: 'Labour',             data: rows.map(r => Math.round(r.tL)),             backgroundColor: 'rgba(220,38,38,0.75)',  borderRadius: 3 },
+        { label: 'Materials',          data: rows.map(r => Math.round(r.tM)),             backgroundColor: 'rgba(234,88,12,0.75)',  borderRadius: 3 },
+        { label: 'Overhead',           data: rows.map(r => Math.round(r.tO)),             backgroundColor: 'rgba(202,138,4,0.75)',  borderRadius: 3 },
+        { label: 'Liabilities',        data: rows.map(r => Math.round(r.tLiab)),          backgroundColor: 'rgba(109,40,217,0.65)', borderRadius: 3 },
+        { label: 'Operating cashflow', data: rows.map(r => Math.round(r.cash)),   type: 'line', borderColor: '#1d4ed8', backgroundColor: 'transparent', borderWidth: 2, pointRadius: allMonths.length > 18 ? 2 : 3, tension: 0.3, order: 0 },
+        { label: 'Cumulative cash',    data: rows.map(r => Math.round(r.cumCash)), type: 'line', borderColor: '#7c3aed', backgroundColor: 'transparent', borderWidth: 2, borderDash: [5,3], pointRadius: allMonths.length > 18 ? 2 : 3, tension: 0.3, order: 0 }
       ]
     },
     options: {
@@ -1145,51 +1184,259 @@ function renderForecastSection() {
     }
   });
 
-  let totL=0,totM=0,totO=0,totB=0,totLiab=0,totRetHeld=0,totRetRelease=0;
-  rows.forEach(r=>{totL+=r.tL;totM+=r.tM;totO+=r.tO;totB+=r.tB;totLiab+=r.tLiab;totRetHeld+=r.tRetHeld;totRetRelease+=r.tRetRelease;});
+  let totL=0,totM=0,totO=0,totGross=0,totRetHeld=0,totLiab=0,totRetRec=0;
+  rows.forEach(r=>{totL+=r.tL;totM+=r.tM;totO+=r.tO;totGross+=r.tGrossBilling;totRetHeld+=r.tRetHeld;totLiab+=r.tLiab;totRetRec+=r.tRetReceived;});
   const totC=totL+totM+totO;
-  const totNet = (totB-totRetHeld)+totRetRelease-totC-totLiab;
+  const totNet=totGross-totRetHeld;
+  const totCash=totNet+totRetRec-totC-totLiab;
 
-  let tbl = '<div class="card" style="padding:0;overflow:hidden;margin-top:1rem;overflow-x:auto"><table><thead><tr><th>Month</th><th>Labour</th><th>Materials</th><th>Overhead</th><th>Job costs</th><th>Liabilities</th><th>Gross billing</th><th>Retention held</th><th>Retention release</th><th>Net cashflow</th></tr></thead><tbody>';
+  let tbl = '<div class="card" style="padding:0;overflow:hidden;margin-top:1rem;overflow-x:auto"><table><thead><tr><th>Month</th><th>Labour</th><th>Materials</th><th>Overhead</th><th>Job costs</th><th>Liabilities</th><th>Gross billing</th><th>Retention held</th><th>Net billing</th><th>Retention received</th><th>Monthly cashflow</th><th>Cumulative cash</th></tr></thead><tbody>';
   rows.forEach(r => {
     const cur = getCurrentMonth();
     const rowBg = r.m < cur ? 'background:#fafafa' : '';
-    const retRelCell = r.tRetRelease > 0 ? `<span style="color:#0f766e;font-weight:600">+${fmt(r.tRetRelease)}</span>` : '<span style="color:#ccc">—</span>';
-    const retHeldCell = r.tRetHeld > 0 ? `<span class="red">${fmt(r.tRetHeld)}</span>` : '<span style="color:#ccc">—</span>';
+    const retRecCell = r.tRetReceived > 0 ? `<span style="color:#0f766e;font-weight:600">+${fmt(r.tRetReceived)}</span>` : '<span style="color:#ccc">—</span>';
+    const cumClass = r.cumCash >= 0 ? 'green' : 'red';
     tbl += `<tr style="${rowBg}">
       <td style="white-space:nowrap">${monthLabel(r.m)}</td>
       <td>${fmt(r.tL)}</td><td>${fmt(r.tM)}</td><td>${fmt(r.tO)}</td>
       <td><strong>${fmt(r.tC)}</strong></td>
       <td class="red">${r.tLiab>0?fmt(r.tLiab):'<span style="color:#ccc">—</span>'}</td>
-      <td>${fmt(r.tB)}</td>
-      <td>${retHeldCell}</td>
-      <td>${retRelCell}</td>
+      <td>${fmt(r.tGrossBilling)}</td>
+      <td class="red">${r.tRetHeld>0?fmt(r.tRetHeld):'<span style="color:#ccc">—</span>'}</td>
+      <td><strong>${fmt(r.tNetBilling)}</strong></td>
+      <td>${retRecCell}</td>
       <td class="${r.cash>=0?'green':'red'}"><strong>${r.cash>=0?'+':''}${fmt(r.cash)}</strong></td>
+      <td class="${cumClass}" style="font-weight:600;border-left:2px solid #e8e8e8">${r.cumCash>=0?'+':''}${fmt(r.cumCash)}</td>
     </tr>`;
   });
   tbl += `<tr style="background:#f0f0f0;font-weight:600">
-    <td>Total</td><td>${fmt(totL)}</td><td>${fmt(totM)}</td><td>${fmt(totO)}</td><td>${fmt(totC)}</td>
-    <td class="red">${fmt(totLiab)}</td><td>${fmt(totB)}</td>
-    <td class="red">${fmt(totRetHeld)}</td>
-    <td style="color:#0f766e">+${fmt(totRetRelease)}</td>
-    <td class="${totNet>=0?'green':'red'}">${totNet>=0?'+':''}${fmt(totNet)}</td>
+    <td>Total</td><td>${fmt(totL)}</td><td>${fmt(totM)}</td><td>${fmt(totO)}</td>
+    <td>${fmt(totC)}</td><td class="red">${fmt(totLiab)}</td>
+    <td>${fmt(totGross)}</td><td class="red">${fmt(totRetHeld)}</td>
+    <td>${fmt(totNet)}</td>
+    <td style="color:#0f766e">${totRetRec>0?'+'+fmt(totRetRec):'—'}</td>
+    <td class="${totCash>=0?'green':'red'}">${totCash>=0?'+':''}${fmt(totCash)}</td>
+    <td style="border-left:2px solid #e8e8e8"></td>
   </tr>`;
   document.getElementById('ftable').innerHTML = tbl + '</tbody></table></div>';
 }
 
+function setRetentionInvoiceDate(jobIdx, moiety, dateVal) {
+  const j = jobs[jobIdx];
+  if (!j.retentionInvoiceDates) j.retentionInvoiceDates = {};
+  if (dateVal) {
+    j.retentionInvoiceDates[moiety] = dateVal;
+    // Mark as released and record received month from invoice date
+    if (!j.retentionReleases) j.retentionReleases = { m1: false, m2: false };
+    if (!j.retentionReceivedDates) j.retentionReceivedDates = {};
+    j.retentionReleases[moiety] = true;
+    // Received month = month of invoice date
+    j.retentionReceivedDates[moiety] = dateVal.substring(0, 7); // YYYY-MM
+  }
+  renderAll();
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => dbSave(j), 600);
+}
+
+async function toggleRetentionRelease(jobIdx, moiety) {
+  const j = jobs[jobIdx];
+  if (!j.retentionReleases) j.retentionReleases = { m1: false, m2: false };
+  if (!j.retentionReceivedDates) j.retentionReceivedDates = {};
+  if (!j.retentionInvoiceDates) j.retentionInvoiceDates = {};
+  // Only used for undo — clears all release data
+  j.retentionReleases[moiety] = false;
+  delete j.retentionReceivedDates[moiety];
+  delete j.retentionInvoiceDates[moiety];
+  renderAll();
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => dbSave(j), 600);
+}
+
+function renderRetentionsSection() {
+  const el = document.getElementById('retentions');
+  if (!el) return;
+  if (!jobs.length) { el.innerHTML = '<div class="empty-state">No jobs yet.</div>'; return; }
+
+  const cur = getCurrentMonth();
+
+  // Compute totals using manual release flags
+  let totalHeld=0, totalReleased=0, totalDue=0;
+  jobs.forEach(j => {
+    const half = getRetentionTotal(j) / 2;
+    const rr = j.retentionReleases || { m1: false, m2: false };
+    const m1 = getFirstMoietyMonth(j);
+    const m2 = getSecondMoietyMonth(j);
+    totalHeld += getRetentionTotal(j);
+    if (rr.m1) totalReleased += half; else if (m1 && m1 <= cur) totalDue += half;
+    if (rr.m2) totalReleased += half; else if (m2 && m2 <= cur) totalDue += half;
+  });
+  const totalOutstanding = totalHeld - totalReleased;
+
+  // Summary metrics
+  let html = `
+    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:1.5rem">
+      <div class="metric"><div class="metric-label">Total retention held</div><div class="metric-value red">${fmt(totalHeld)}</div></div>
+      <div class="metric"><div class="metric-label">Due for release</div><div class="metric-value" style="color:#d97706">${fmt(totalDue)}</div></div>
+      <div class="metric"><div class="metric-label">Released</div><div class="metric-value green">${fmt(totalReleased)}</div></div>
+      <div class="metric"><div class="metric-label">Still outstanding</div><div class="metric-value red">${fmt(totalOutstanding)}</div></div>
+    </div>`;
+
+  // Chart placeholder — will be populated by JS after innerHTML set
+  html += `<div class="card" style="margin-bottom:1.5rem;padding:1rem 1.25rem">
+    <div style="position:relative;width:100%;height:240px"><canvas id="retChart"></canvas></div>
+  </div>`;
+
+  // Release schedule timeline
+  const timeline = [];
+  jobs.forEach((j, ji) => {
+    const half = getRetentionTotal(j) / 2;
+    const rr = j.retentionReleases || { m1: false, m2: false };
+    const m1 = getFirstMoietyMonth(j);
+    const m2 = getSecondMoietyMonth(j);
+    if (m1) timeline.push({ m: m1, v: half, job: j, ji, mKey: 'm1', label: '1st 50% — on completion', released: rr.m1, due: m1 <= cur && !rr.m1 });
+    if (m2) timeline.push({ m: m2, v: half, job: j, ji, mKey: 'm2', label: `2nd 50% — after ${j.moiety}m defects`, released: rr.m2, due: m2 <= cur && !rr.m2 });
+  });
+  timeline.sort((a, b) => a.m.localeCompare(b.m));
+
+  if (timeline.length) {
+    html += `<div style="font-size:12px;font-weight:600;color:#888;text-transform:uppercase;letter-spacing:.05em;margin-bottom:.5rem">Release schedule</div>
+    <div class="card" style="padding:0;overflow:hidden">
+    <table><thead><tr><th>Month due</th><th>Job</th><th>Client</th><th>Release</th><th>Amount</th><th>Status</th><th>Action</th></tr></thead><tbody>`;
+    timeline.forEach(u => {
+      const rd = u.job.retentionInvoiceDates && u.job.retentionInvoiceDates[u.mKey];
+      const bg = u.released ? 'background:#f0fdf4' : u.due ? 'background:#fefce8' : '';
+
+      // Status cell
+      const statusCell = u.released
+        ? `<span class="badge badge-actual">Invoiced</span>`
+        : u.due
+          ? '<span style="background:#fef9c3;color:#a16207;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:500">Due</span>'
+          : '<span class="badge badge-forecast">Upcoming</span>';
+
+      // Action cell — three states
+      let actionCell = '';
+      if (u.released) {
+        // Show invoice due date and undo button
+        actionCell = `
+          <div style="font-size:12px;color:#15803d">Invoice due: <strong>${rd ? new Date(rd).toLocaleDateString('en-GB') : '—'}</strong></div>
+          <button onclick="toggleRetentionRelease(${u.ji},'${u.mKey}')" style="margin-top:4px;padding:3px 10px;font-size:11px;border:1px solid #bbf7d0;border-radius:6px;background:#dcfce7;color:#15803d;cursor:pointer;font-family:inherit">✓ Invoiced — undo</button>`;
+      } else if (u.due) {
+        const inputId = `inv-${u.ji}-${u.mKey}`;
+        actionCell = `
+          <div id="btn-${inputId}">
+            <button onclick="document.getElementById('btn-${inputId}').style.display='none';document.getElementById('picker-${inputId}').style.display='flex'"
+              style="padding:4px 12px;font-size:12px;border:1px solid #fde68a;border-radius:6px;background:#fef9c3;color:#a16207;cursor:pointer;font-family:inherit">
+              Invoiced
+            </button>
+          </div>
+          <div id="picker-${inputId}" style="display:none;align-items:center;gap:6px;flex-wrap:wrap">
+            <label style="font-size:12px;color:#555;margin:0">Invoice due:</label>
+            <input type="date" id="input-${inputId}"
+              style="font-size:12px;padding:3px 6px;border:1px solid #fde68a;border-radius:6px;width:140px"
+              value="${new Date().toISOString().split('T')[0]}">
+            <button onclick="setRetentionInvoiceDate(${u.ji},'${u.mKey}',document.getElementById('input-${inputId}').value)"
+              style="padding:3px 10px;font-size:12px;border:1px solid #bbf7d0;border-radius:6px;background:#dcfce7;color:#15803d;cursor:pointer;font-family:inherit">
+              Confirm
+            </button>
+            <button onclick="document.getElementById('picker-${inputId}').style.display='none';document.getElementById('btn-${inputId}').style.display='block'"
+              style="padding:3px 8px;font-size:12px;border:1px solid #ddd;border-radius:6px;background:#f5f5f5;color:#888;cursor:pointer;font-family:inherit">
+              Cancel
+            </button>
+          </div>`;
+      } else {
+        const inputId = `inv-${u.ji}-${u.mKey}`;
+        actionCell = `
+          <div id="btn-${inputId}">
+            <button onclick="document.getElementById('btn-${inputId}').style.display='none';document.getElementById('picker-${inputId}').style.display='flex'"
+              style="padding:4px 12px;font-size:12px;border:1px solid #ddd;border-radius:6px;background:#f5f5f5;color:#888;cursor:pointer;font-family:inherit">
+              Mark invoiced
+            </button>
+          </div>
+          <div id="picker-${inputId}" style="display:none;align-items:center;gap:6px;flex-wrap:wrap">
+            <label style="font-size:12px;color:#555;margin:0">Invoice due:</label>
+            <input type="date" id="input-${inputId}"
+              style="font-size:12px;padding:3px 6px;border:1px solid #ddd;border-radius:6px;width:140px"
+              value="${new Date().toISOString().split('T')[0]}">
+            <button onclick="setRetentionInvoiceDate(${u.ji},'${u.mKey}',document.getElementById('input-${inputId}').value)"
+              style="padding:3px 10px;font-size:12px;border:1px solid #bbf7d0;border-radius:6px;background:#dcfce7;color:#15803d;cursor:pointer;font-family:inherit">
+              Confirm
+            </button>
+            <button onclick="document.getElementById('picker-${inputId}').style.display='none';document.getElementById('btn-${inputId}').style.display='block'"
+              style="padding:3px 8px;font-size:12px;border:1px solid #ddd;border-radius:6px;background:#f5f5f5;color:#888;cursor:pointer;font-family:inherit">
+              Cancel
+            </button>
+          </div>`;
+      }
+
+      html += `<tr style="${bg}">
+        <td style="white-space:nowrap;font-weight:500">${monthLabel(u.m)}</td>
+        <td>${u.job.name}</td><td>${u.job.client||'—'}</td>
+        <td style="font-size:12px;color:#888">${u.label}</td>
+        <td class="${u.released?'green':''}">${u.released?'+':''}${fmt(u.v)}</td>
+        <td>${statusCell}</td>
+        <td>${actionCell}</td>
+      </tr>`;
+    });
+    html += '</tbody></table></div>';
+  }
+
+  el.innerHTML = html;
+
+  // Build chart after DOM is set
+  if (timeline.length) {
+    // Group months — show all unique months from timeline plus surrounding context
+    const allM = [...new Set(timeline.map(t => t.m))].sort();
+    const chartData = allM.map(m => {
+      let held=0, due=0, released=0;
+      timeline.forEach(t => {
+        if (t.m !== m) return;
+        if (t.released) released += t.v;
+        else if (t.due) due += t.v;
+        else held += t.v;
+      });
+      return { m, held, due, released };
+    });
+
+    const retChartEl = document.getElementById('retChart');
+    if (retChartEl) {
+      new Chart(retChartEl.getContext('2d'), {
+        type: 'bar',
+        data: {
+          labels: chartData.map(d => monthLabel(d.m)),
+          datasets: [
+            { label: 'Held', data: chartData.map(d => Math.round(d.held)), backgroundColor: 'rgba(220,38,38,0.65)', borderRadius: 4 },
+            { label: 'Due', data: chartData.map(d => Math.round(d.due)), backgroundColor: 'rgba(217,119,6,0.7)', borderRadius: 4 },
+            { label: 'Released', data: chartData.map(d => Math.round(d.released)), backgroundColor: 'rgba(22,163,74,0.7)', borderRadius: 4 }
+          ]
+        },
+        options: {
+          responsive: true, maintainAspectRatio: false,
+          plugins: {
+            legend: { display: true, position: 'top', labels: { font: { size: 12 }, boxWidth: 12, padding: 16 } }
+          },
+          scales: {
+            y: { ticks: { callback: v => '£'+(Math.abs(v)>=1000?(v/1000).toFixed(0)+'k':v), font:{size:11} }, grid:{color:'#f0f0f0'} },
+            x: { ticks: { font:{size:11} }, grid:{display:false} }
+          }
+        }
+      });
+    }
+  }
+}
+
 function renderAll() {
-  renderMetrics(); renderJobsTable(); renderActualsSection(); renderLiabilitiesSection(); renderForecastSection();
+  renderMetrics(); renderJobsTable(); renderActualsSection(); renderLiabilitiesSection(); renderRetentionsSection(); renderForecastSection();
 }
 
 function showTab(id) {
-  document.querySelectorAll('.tab').forEach((t, i) => t.classList.toggle('active', ['jobs','actuals','liabilities','forecast'][i] === id));
+  document.querySelectorAll('.tab').forEach((t, i) => t.classList.toggle('active', ['jobs','actuals','liabilities','retentions','forecast'][i] === id));
   document.querySelectorAll('.section').forEach(s => s.classList.toggle('active', s.id === id));
 }
 
 function openAddJob() {
   editIdx = null;
   document.getElementById('modal-title').textContent = 'Add job';
-  ['f-name','f-client','f-labour','f-materials','f-overhead','f-contract','f-defects-end'].forEach(id => document.getElementById(id).value = '');
+  ['f-name','f-client','f-labour','f-materials','f-overhead','f-contract'].forEach(id => document.getElementById(id).value = '');
   document.getElementById('f-dur').value = 3; document.getElementById('f-retention').value = 5;
   document.getElementById('f-status').value = 'active'; document.getElementById('f-moiety').value = '12';
   const now = new Date(); document.getElementById('f-start').value = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0');
@@ -1204,7 +1451,6 @@ function editJob(idx) {
   document.getElementById('f-contract').value = j.contract; document.getElementById('f-labour').value = j.labour;
   document.getElementById('f-materials').value = j.materials; document.getElementById('f-overhead').value = j.overhead;
   document.getElementById('f-retention').value = j.retention; document.getElementById('f-status').value = j.status;
-  document.getElementById('f-defects-end').value = j.defectsEnd || '';
   document.getElementById('f-moiety').value = String(j.moiety || 12);
   document.getElementById('modal-backdrop').classList.add('open');
 }
@@ -1224,9 +1470,11 @@ async function saveJob() {
     materials: parseFloat(document.getElementById('f-materials').value) || 0,
     overhead: parseFloat(document.getElementById('f-overhead').value) || 0,
     retention: parseFloat(document.getElementById('f-retention').value) || 0,
-    defectsEnd: document.getElementById('f-defects-end').value || null,
     moiety: parseInt(document.getElementById('f-moiety').value) || 12,
     status: document.getElementById('f-status').value,
+    retentionReleases: editIdx !== null ? (jobs[editIdx].retentionReleases || { m1: false, m2: false }) : { m1: false, m2: false },
+    retentionReceivedDates: editIdx !== null ? (jobs[editIdx].retentionReceivedDates || {}) : {},
+    retentionInvoiceDates: editIdx !== null ? (jobs[editIdx].retentionInvoiceDates || {}) : {},
     actuals: editIdx !== null ? jobs[editIdx].actuals : {}
   };
   if (editIdx !== null) jobs[editIdx] = job; else jobs.push(job);
