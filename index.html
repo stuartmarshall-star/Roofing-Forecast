@@ -738,16 +738,23 @@ function renderJobsTable() {
   const el = document.getElementById('jobs');
   if (!jobs.length) { el.innerHTML = '<div class="empty-state">No jobs yet — click "+ Add job" to get started.</div>'; return; }
   const cur = getCurrentMonth();
-  let html = '<div class="card" style="padding:0;overflow:hidden"><table><thead><tr><th>Job</th><th>Client</th><th>Period</th><th>Contract</th><th>Total cost</th><th>Margin</th><th>Progress</th><th>Status</th><th></th></tr></thead><tbody>';
+  let html = '<div class="card" style="padding:0;overflow:hidden;overflow-x:auto"><table><thead><tr><th>Job</th><th>Client</th><th>Period</th><th>Contract</th><th>Labour</th><th>Materials</th><th>Overhead</th><th>Total cost</th><th>Margin</th><th>Progress</th><th>Status</th><th></th></tr></thead><tbody>';
+  let totContract=0, totLabour=0, totMaterials=0, totOverhead=0;
   jobs.forEach((j, i) => {
     const tc = j.labour + j.materials + j.overhead;
     const margin = j.contract > 0 ? (j.contract - tc) / j.contract * 100 : 0;
     const months = getMonths(j.start, j.dur);
     const pct = Math.round(months.filter(m => m <= cur).length / j.dur * 100);
+    totContract += j.contract; totLabour += j.labour; totMaterials += j.materials; totOverhead += j.overhead;
     html += `<tr>
-      <td><strong>${j.name}</strong></td><td>${j.client || '—'}</td>
+      <td><strong>${j.name}</strong></td>
+      <td>${j.client || '—'}</td>
       <td style="white-space:nowrap">${monthLabel(j.start)} – ${monthLabel(months[months.length - 1])}</td>
-      <td>${fmt(j.contract)}</td><td>${fmt(tc)}</td>
+      <td>${fmt(j.contract)}</td>
+      <td>${fmt(j.labour)}</td>
+      <td>${fmt(j.materials)}</td>
+      <td>${fmt(j.overhead)}</td>
+      <td><strong>${fmt(tc)}</strong></td>
       <td class="${margin >= 15 ? 'green' : 'red'}">${fmtPct(margin)}</td>
       <td style="min-width:100px">
         <div style="font-size:11px;color:#888">${pct}% through</div>
@@ -760,6 +767,19 @@ function renderJobsTable() {
         <button class="btn btn-sm btn-danger" onclick="deleteJob(${i})">Del</button>
       </td></tr>`;
   });
+  // Totals row
+  const totCost = totLabour + totMaterials + totOverhead;
+  const totMargin = totContract > 0 ? (totContract - totCost) / totContract * 100 : 0;
+  html += `<tr style="background:#f0f0f0;font-weight:600;border-top:2px solid #e0e0e0">
+    <td>Totals</td><td></td><td></td>
+    <td>${fmt(totContract)}</td>
+    <td>${fmt(totLabour)}</td>
+    <td>${fmt(totMaterials)}</td>
+    <td>${fmt(totOverhead)}</td>
+    <td>${fmt(totCost)}</td>
+    <td class="${totMargin >= 15 ? 'green' : 'red'}">${fmtPct(totMargin)}</td>
+    <td></td><td></td><td></td>
+  </tr>`;
   el.innerHTML = html + '</tbody></table></div>';
 }
 
@@ -773,9 +793,21 @@ function renderActualsSection() {
   const fields = ['labour', 'materials', 'overhead', 'billing'];
   const scheds = {}; fields.forEach(f => { scheds[f] = buildSchedule(j, f); });
 
-  // Pills
-  let pills = '<div class="pill-row">' + jobs.map((jj, i) =>
-    `<button class="job-pill ${i === activeActualsJob ? 'active' : ''}" onclick="setActualsJob(${i})">${jj.name}</button>`).join('') + '</div>';
+  // Pills — show job name and client
+  let pills = '<div class="pill-row">' + jobs.map((jj, i) => {
+    const label = jj.client ? `${jj.name} <span style="opacity:.6;font-size:11px">· ${jj.client}</span>` : jj.name;
+    return `<button class="job-pill ${i === activeActualsJob ? 'active' : ''}" onclick="setActualsJob(${i})">${label}</button>`;
+  }).join('') + '</div>';
+
+  // Job header with client name and edit button
+  const jobHeader = `
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem;flex-wrap:wrap;gap:10px">
+      <div>
+        <div style="font-size:16px;font-weight:600">${j.name}</div>
+        ${j.client ? `<div style="font-size:13px;color:#888;margin-top:2px">${j.client}</div>` : ''}
+      </div>
+      <button class="btn btn-sm" onclick="editJob(${activeActualsJob})">Edit job details</button>
+    </div>`;
 
   // Balance strip
   let bal = '<div class="balance-strip">';
@@ -857,7 +889,7 @@ function renderActualsSection() {
     <td class="${tB-tC>=0?'green':'red'}">${tB-tC>=0?'+':''}${fmt(tB-tC)}</td><td></td>
   </tr>`;
 
-  el.innerHTML = pills + bal + legend + tbl + '</tbody></table></div>';
+  el.innerHTML = pills + jobHeader + bal + legend + tbl + '</tbody></table></div>';
 }
 
 function setActual(jobIdx, month, field, val) {
