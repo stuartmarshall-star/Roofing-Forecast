@@ -1034,31 +1034,31 @@ function renderForecastSection() {
           label: 'Billing',
           data: rows.map(r => Math.round(r.tB)),
           backgroundColor: 'rgba(22,163,74,0.75)',
-          borderRadius: 3, stack: 'billing'
+          borderRadius: 3
         },
         {
           label: 'Labour',
           data: rows.map(r => Math.round(r.tL)),
           backgroundColor: 'rgba(220,38,38,0.75)',
-          borderRadius: 0, stack: 'costs'
+          borderRadius: 3
         },
         {
           label: 'Materials',
           data: rows.map(r => Math.round(r.tM)),
           backgroundColor: 'rgba(234,88,12,0.75)',
-          borderRadius: 0, stack: 'costs'
+          borderRadius: 3
         },
         {
           label: 'Overhead',
           data: rows.map(r => Math.round(r.tO)),
           backgroundColor: 'rgba(202,138,4,0.75)',
-          borderRadius: 0, stack: 'costs'
+          borderRadius: 3
         },
         {
           label: 'Liabilities',
           data: rows.map(r => Math.round(r.tLiab)),
           backgroundColor: 'rgba(109,40,217,0.65)',
-          borderRadius: 3, stack: 'costs'
+          borderRadius: 3
         },
         {
           label: 'Net cashflow',
@@ -1078,12 +1078,10 @@ function renderForecastSection() {
       plugins: { legend: { display: false } },
       scales: {
         y: {
-          stacked: true,
           ticks: { callback: v => '£' + (Math.abs(v) >= 1000 ? (v/1000).toFixed(0) + 'k' : v), font: { size: 11 } },
           grid: { color: '#f0f0f0' }
         },
         x: {
-          stacked: true,
           ticks: { font: { size: 11 }, maxRotation: allMonths.length > 12 ? 45 : 0, autoSkip: allMonths.length > 24 },
           grid: { display: false }
         }
