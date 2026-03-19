@@ -1014,11 +1014,13 @@ function renderForecastSection() {
   const chartH = allMonths.length > 18 ? 320 : 280;
 
   contentEl.innerHTML = `
-    <div style="display:flex;gap:18px;font-size:12px;color:#888;margin-bottom:.75rem;flex-wrap:wrap">
-      <span style="display:flex;align-items:center;gap:6px"><span style="width:12px;height:12px;border-radius:2px;background:rgba(22,163,74,0.7);display:inline-block"></span>Billing received</span>
-      <span style="display:flex;align-items:center;gap:6px"><span style="width:12px;height:12px;border-radius:2px;background:rgba(220,38,38,0.6);display:inline-block"></span>Job costs</span>
-      <span style="display:flex;align-items:center;gap:6px"><span style="width:12px;height:12px;border-radius:2px;background:rgba(109,40,217,0.6);display:inline-block"></span>Liabilities</span>
-      <span style="display:flex;align-items:center;gap:6px"><span style="width:24px;height:2px;background:#1d4ed8;display:inline-block"></span>Net cashflow</span>
+    <div style="display:flex;gap:14px;font-size:12px;color:#888;margin-bottom:.75rem;flex-wrap:wrap;align-items:center">
+      <span style="display:flex;align-items:center;gap:5px"><span style="width:12px;height:12px;border-radius:2px;background:rgba(22,163,74,0.75);display:inline-block"></span>Billing</span>
+      <span style="display:flex;align-items:center;gap:5px"><span style="width:12px;height:12px;border-radius:2px;background:rgba(220,38,38,0.7);display:inline-block"></span>Labour</span>
+      <span style="display:flex;align-items:center;gap:5px"><span style="width:12px;height:12px;border-radius:2px;background:rgba(234,88,12,0.7);display:inline-block"></span>Materials</span>
+      <span style="display:flex;align-items:center;gap:5px"><span style="width:12px;height:12px;border-radius:2px;background:rgba(202,138,4,0.7);display:inline-block"></span>Overhead</span>
+      <span style="display:flex;align-items:center;gap:5px"><span style="width:12px;height:12px;border-radius:2px;background:rgba(109,40,217,0.65);display:inline-block"></span>Liabilities</span>
+      <span style="display:flex;align-items:center;gap:5px"><span style="width:24px;height:2px;background:#1d4ed8;display:inline-block"></span>Net cashflow</span>
     </div>
     <div style="position:relative;width:100%;height:${chartH}px;margin-bottom:1.5rem"><canvas id="forecastChart"></canvas></div>
     <div id="ftable"></div>`;
@@ -1028,18 +1030,63 @@ function renderForecastSection() {
     data: {
       labels: allMonths.map(monthLabel),
       datasets: [
-        { label: 'Billing',      data: rows.map(r => Math.round(r.tB)),    backgroundColor: 'rgba(22,163,74,0.7)',  borderRadius: 3 },
-        { label: 'Job costs',    data: rows.map(r => Math.round(r.tC)),    backgroundColor: 'rgba(220,38,38,0.6)',  borderRadius: 3 },
-        { label: 'Liabilities',  data: rows.map(r => Math.round(r.tLiab)), backgroundColor: 'rgba(109,40,217,0.6)', borderRadius: 3 },
-        { label: 'Net cashflow', data: rows.map(r => Math.round(r.cash)),  type: 'line', borderColor: '#1d4ed8', backgroundColor: 'transparent', borderWidth: 2, pointRadius: allMonths.length > 18 ? 2 : 3, tension: 0.3 }
+        {
+          label: 'Billing',
+          data: rows.map(r => Math.round(r.tB)),
+          backgroundColor: 'rgba(22,163,74,0.75)',
+          borderRadius: 3, stack: 'billing'
+        },
+        {
+          label: 'Labour',
+          data: rows.map(r => Math.round(r.tL)),
+          backgroundColor: 'rgba(220,38,38,0.75)',
+          borderRadius: 0, stack: 'costs'
+        },
+        {
+          label: 'Materials',
+          data: rows.map(r => Math.round(r.tM)),
+          backgroundColor: 'rgba(234,88,12,0.75)',
+          borderRadius: 0, stack: 'costs'
+        },
+        {
+          label: 'Overhead',
+          data: rows.map(r => Math.round(r.tO)),
+          backgroundColor: 'rgba(202,138,4,0.75)',
+          borderRadius: 0, stack: 'costs'
+        },
+        {
+          label: 'Liabilities',
+          data: rows.map(r => Math.round(r.tLiab)),
+          backgroundColor: 'rgba(109,40,217,0.65)',
+          borderRadius: 3, stack: 'costs'
+        },
+        {
+          label: 'Net cashflow',
+          data: rows.map(r => Math.round(r.cash)),
+          type: 'line',
+          borderColor: '#1d4ed8',
+          backgroundColor: 'transparent',
+          borderWidth: 2,
+          pointRadius: allMonths.length > 18 ? 2 : 3,
+          tension: 0.3,
+          order: 0
+        }
       ]
     },
     options: {
       responsive: true, maintainAspectRatio: false,
       plugins: { legend: { display: false } },
       scales: {
-        y: { ticks: { callback: v => '£' + (Math.abs(v) >= 1000 ? (v/1000).toFixed(0) + 'k' : v), font: { size: 11 } }, grid: { color: '#f0f0f0' } },
-        x: { ticks: { font: { size: 11 }, maxRotation: allMonths.length > 12 ? 45 : 0, autoSkip: allMonths.length > 24 }, grid: { display: false } }
+        y: {
+          stacked: true,
+          ticks: { callback: v => '£' + (Math.abs(v) >= 1000 ? (v/1000).toFixed(0) + 'k' : v), font: { size: 11 } },
+          grid: { color: '#f0f0f0' }
+        },
+        x: {
+          stacked: true,
+          ticks: { font: { size: 11 }, maxRotation: allMonths.length > 12 ? 45 : 0, autoSkip: allMonths.length > 24 },
+          grid: { display: false }
+        }
       }
     }
   });
