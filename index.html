@@ -911,11 +911,11 @@ function getEarliestJobStart() {
 function initForecastControls() {
   const start = getEarliestJobStart();
   fcStartMonth = start;
-  fcLength = 12;
+  fcLength = 'all';
   const startEl = document.getElementById('fc-start');
   if (startEl) startEl.value = start;
   const lenEl = document.getElementById('fc-length');
-  if (lenEl) lenEl.value = '12';
+  if (lenEl) lenEl.value = 'all';
 }
 
 function onFcLengthChange() {
