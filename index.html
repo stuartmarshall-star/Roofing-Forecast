@@ -159,6 +159,19 @@
 
   <div class="metric-row" id="metrics"></div>
 
+  <!-- Opening balance strip — always visible -->
+  <div style="display:flex;align-items:center;gap:12px;background:#fff;border:1px solid #e8e8e8;border-radius:10px;padding:.75rem 1.25rem;margin-bottom:1rem;flex-wrap:wrap">
+    <div style="font-size:13px;font-weight:500;color:#1a1a1a;white-space:nowrap">Opening balance</div>
+    <div style="display:flex;align-items:center;gap:6px">
+      <span style="font-size:13px;color:#555">£</span>
+      <input type="number" id="fc-opening-balance" style="width:130px;font-size:13px;padding:5px 8px"
+        placeholder="0" oninput="renderForecastSection()">
+      <button class="btn btn-primary btn-sm" onclick="saveOpeningBalance()">Save</button>
+    </div>
+    <div style="font-size:12px;color:#888" id="ob-month-label"></div>
+    <div style="font-size:12px;color:#aaa;margin-left:auto">Enter your current bank balance — the cumulative forecast column runs from this figure</div>
+  </div>
+
   <div class="tabs">
     <button class="tab active" onclick="showTab('jobs')">All jobs</button>
     <button class="tab" onclick="showTab('actuals')">Enter actuals</button>
@@ -316,7 +329,16 @@ const CORRECT_PIN = '1976';
   alter table liabilities enable row level security;
   create policy "Public access" on liabilities for all using (true) with check (true);
 
-  -- Run this to add retention release columns to existing jobs table:
+  -- Settings table (for opening balance and future app settings):
+  create table if not exists settings (
+    id uuid primary key default gen_random_uuid(),
+    key text unique not null,
+    value text,
+    month text,
+    created_at timestamptz default now()
+  );
+  alter table settings enable row level security;
+  create policy "Public access" on settings for all using (true) with check (true);
   alter table jobs add column if not exists defects_end text;
   alter table jobs add column if not exists moiety integer default 12;
   alter table jobs add column if not exists retention_releases jsonb default '{"m1":false,"m2":false}';
@@ -383,6 +405,8 @@ let saveTimer = null;
 let isConnected = false;
 let fcStartMonth = '';
 let fcLength = 12;
+let openingBalance = 0;
+let openingBalanceMonth = '';
 
 // ── Supabase helpers ─────────────────────────────────────────────────────────
 function sbHeaders() {
@@ -442,12 +466,22 @@ function setSaving(msg) { document.getElementById('saving-indicator').textConten
 async function loadJobs() {
   setStatus('connecting', 'Connecting to your database...');
   try {
-    const [jobData, liabData] = await Promise.all([
+    const [jobData, liabData, settingsData] = await Promise.all([
       sbFetch('jobs?select=*&order=created_at.asc'),
-      sbFetch('liabilities?select=*&order=created_at.asc').catch(() => [])
+      sbFetch('liabilities?select=*&order=created_at.asc').catch(() => []),
+      sbFetch('settings?select=*').catch(() => [])
     ]);
     jobs = jobData.map(dbToJob);
     liabilities = liabData.map(dbToLiab);
+    // Load opening balance from settings
+    const obSetting = settingsData.find(s => s.key === 'opening_balance');
+    if (obSetting) {
+      openingBalance = parseFloat(obSetting.value) || 0;
+      openingBalanceMonth = obSetting.month || getCurrentMonth();
+    } else {
+      openingBalance = 0;
+      openingBalanceMonth = getCurrentMonth();
+    }
     isConnected = true;
     setStatus('connected', 'Connected — all changes save automatically and sync live with your accountant');
     setupRealtime();
@@ -458,6 +492,34 @@ async function loadJobs() {
     setStatus('error', 'Could not connect: ' + e.message);
     renderAll();
   }
+}
+
+async function saveOpeningBalance() {
+  const val = parseFloat(document.getElementById('fc-opening-balance').value) || 0;
+  openingBalance = val;
+  openingBalanceMonth = getCurrentMonth();
+  // Update label
+  const lbl = document.getElementById('ob-month-label');
+  if (lbl) lbl.textContent = 'As at ' + monthLabel(openingBalanceMonth);
+  renderForecastSection();
+  if (!isConnected) return;
+  setSaving('Saving...');
+  try {
+    // Upsert — check if setting exists first
+    const existing = await sbFetch('settings?key=eq.opening_balance').catch(() => []);
+    if (existing && existing.length > 0) {
+      await sbFetch('settings?key=eq.opening_balance', {
+        method: 'PATCH',
+        body: JSON.stringify({ value: String(val), month: openingBalanceMonth })
+      });
+    } else {
+      await sbFetch('settings', {
+        method: 'POST',
+        body: JSON.stringify({ key: 'opening_balance', value: String(val), month: openingBalanceMonth })
+      });
+    }
+    setSaving('Saved ✓'); setTimeout(() => setSaving(''), 2000);
+  } catch(e) { setSaving('Save failed'); }
 }
 
 function dbToLiab(row) {
@@ -663,6 +725,26 @@ function getRetentionReceivedForMonth(month) {
     if (rr.m2 && rd.m2 === month) sum += half;
     return sum;
   }, 0);
+}
+
+// Global billing helper used by forecast rows and expand detail
+function getJobBillingForMonth(j, month) {
+  const ms = getMonths(j.start, j.dur);
+  if (!ms.includes(month)) return { gross: 0, ret: 0 };
+  const grossPerMonth = j.contract / j.dur;
+  const retPerMonth = grossPerMonth * (j.retention / 100);
+  const netBilling = buildSchedule(j,'billing')[month].value;
+  const gross = netBilling + retPerMonth;
+  return { gross, ret: retPerMonth };
+}
+
+function toggleDetail(detailId, btnId) {
+  const row = document.getElementById(detailId);
+  const btn = document.getElementById(btnId);
+  if (!row) return;
+  const isOpen = row.style.display !== 'none';
+  row.style.display = isOpen ? 'none' : 'table-row';
+  if (btn) btn.textContent = isOpen ? '+' : '−';
 }
 
 // ── Liability helpers ────────────────────────────────────────────────────────
@@ -1048,6 +1130,11 @@ function initForecastControls() {
   if (startEl) startEl.value = start;
   const lenEl = document.getElementById('fc-length');
   if (lenEl) lenEl.value = 'all';
+  // Populate opening balance
+  const obEl = document.getElementById('fc-opening-balance');
+  if (obEl) obEl.value = openingBalance || '';
+  const lbl = document.getElementById('ob-month-label');
+  if (lbl && openingBalanceMonth) lbl.textContent = 'As at ' + monthLabel(openingBalanceMonth);
 }
 
 function onFcLengthChange() {
@@ -1134,17 +1221,6 @@ function renderForecastSection() {
   const rangeEl = document.getElementById('fc-range-label');
   if (rangeEl) rangeEl.textContent = monthLabel(allMonths[0]) + ' – ' + monthLabel(allMonths[allMonths.length - 1]) + ' (' + allMonths.length + ' months)';
 
-  // Helper: get gross billing and retention for a job in a given month
-  function getJobBillingForMonth(j, month) {
-    const ms = getMonths(j.start, j.dur);
-    if (!ms.includes(month)) return { gross: 0, ret: 0 };
-    const grossPerMonth = j.contract / j.dur;
-    const retPerMonth = grossPerMonth * (j.retention / 100);
-    const netBilling = buildSchedule(j,'billing')[month].value;
-    const gross = netBilling + retPerMonth;
-    return { gross, ret: retPerMonth };
-  }
-
   const rows = allMonths.map(m => {
     const mPrev = prevMonth(m); // previous month — for lagged materials and billing
 
@@ -1177,8 +1253,9 @@ function renderForecastSection() {
     return {m, tL, tM, tO, tC, tGrossBilling, tRetHeld, tNetBilling, tLiab, tRetReceived, cash};
   });
 
-  // Add cumulative cash
-  let cumulative = 0;
+  // Add cumulative cash — starts from opening balance
+  const ob = parseFloat(document.getElementById('fc-opening-balance')?.value) || openingBalance || 0;
+  let cumulative = ob;
   rows.forEach(r => { cumulative += r.cash; r.cumCash = cumulative; });
 
   if (forecastChartInst) { forecastChartInst.destroy(); forecastChartInst = null; }
@@ -1247,16 +1324,52 @@ function renderForecastSection() {
     <th style="border-left:2px solid #e8e8e8">Cumulative</th>
   </tr></thead><tbody>`;
 
-  rows.forEach(r => {
+  rows.forEach((r, ri) => {
     const cur = getCurrentMonth();
     const rowBg = r.m < cur ? 'background:#fafafa' : '';
     const retRecCell = r.tRetReceived > 0 ? `<span style="color:#0f766e;font-weight:600">+${fmt(r.tRetReceived)}</span>` : '<span style="color:#ccc">—</span>';
     const cumClass = r.cumCash >= 0 ? 'green' : 'red';
-    // Tooltip on costs showing breakdown
-    const costTip = `Labour: ${fmt(r.tL)} | Materials: ${fmt(r.tM)} | Overhead: ${fmt(r.tO)} | Liabilities: ${fmt(r.tLiab)}`;
-    tbl += `<tr style="${rowBg}">
-      <td style="white-space:nowrap">${monthLabel(r.m)}</td>
-      <td title="${costTip}" style="cursor:help">
+    const mPrev = prevMonth(r.m);
+
+    // Build per-job detail for this month
+    const jobDetails = [];
+    jobs.forEach(j => {
+      const ms = getMonths(j.start, j.dur);
+      const msPrev = getMonths(j.start, j.dur);
+      const hasThisMonth = ms.includes(r.m);
+      const hasPrevMonth = ms.includes(mPrev);
+      if (!hasThisMonth && !hasPrevMonth) return;
+
+      const jL  = hasThisMonth ? buildSchedule(j,'labour')[r.m].value : 0;
+      const jO  = hasThisMonth ? buildSchedule(j,'overhead')[r.m].value : 0;
+      const jM  = hasPrevMonth ? buildSchedule(j,'materials')[mPrev].value : 0;
+      const prevBil = getJobBillingForMonth(j, mPrev);
+      const jGross = prevBil.gross;
+      const jRet   = prevBil.ret;
+      const jNet   = jGross - jRet;
+      const jCost  = jL + jM + jO;
+      if (jCost === 0 && jNet === 0) return;
+
+      // Liability share — apportion equally across active jobs this month
+      const activeJobsThisMonth = jobs.filter(jj => getMonths(jj.start, jj.dur).includes(r.m)).length || 1;
+      const jLiab = r.tLiab / activeJobsThisMonth;
+
+      jobDetails.push({ name: j.name, client: j.client, jL, jM, jO, jGross, jRet, jNet, jLiab, jCost });
+    });
+
+    // Liabilities breakdown
+    const liabDetails = [];
+    liabilities.forEach(l => {
+      if (getLiabMonths(l).has(r.m)) liabDetails.push({ name: l.name, amount: l.amount });
+    });
+
+    const detailId = `detail-${ri}`;
+    tbl += `<tr style="${rowBg}" id="row-${ri}">
+      <td style="white-space:nowrap">
+        <button onclick="toggleDetail('${detailId}','btn-${ri}')" id="btn-${ri}"
+          style="width:22px;height:22px;border:1px solid #ddd;border-radius:4px;background:#fff;cursor:pointer;font-size:12px;margin-right:6px;line-height:1;vertical-align:middle">+</button>${monthLabel(r.m)}
+      </td>
+      <td>
         <strong>${fmt(r.tC + r.tLiab)}</strong>
         <div style="font-size:11px;color:#888">L:${fmt(r.tL)} M:${fmt(r.tM)} O:${fmt(r.tO)}${r.tLiab>0?' Lb:'+fmt(r.tLiab):''}</div>
       </td>
@@ -1268,6 +1381,51 @@ function renderForecastSection() {
       <td class="${r.cash>=0?'green':'red'}"><strong>${r.cash>=0?'+':''}${fmt(r.cash)}</strong></td>
       <td class="${cumClass}" style="font-weight:600;border-left:2px solid #e8e8e8">${r.cumCash>=0?'+':''}${fmt(r.cumCash)}</td>
     </tr>`;
+
+    // Detail sub-row (hidden by default)
+    let detailHtml = `<tr id="${detailId}" style="display:none">
+      <td colspan="6" style="padding:0;border-bottom:1px solid #e8e8e8">
+        <div style="background:#f8f8f8;padding:10px 14px 10px 42px">
+          <table style="width:100%;font-size:12px;border-collapse:collapse">
+            <thead><tr style="color:#888">
+              <th style="text-align:left;padding:3px 8px;font-weight:500">Job</th>
+              <th style="text-align:right;padding:3px 8px;font-weight:500">Labour</th>
+              <th style="text-align:right;padding:3px 8px;font-weight:500">Materials</th>
+              <th style="text-align:right;padding:3px 8px;font-weight:500">Overhead</th>
+              <th style="text-align:right;padding:3px 8px;font-weight:500">Gross billing</th>
+              <th style="text-align:right;padding:3px 8px;font-weight:500">Retention</th>
+              <th style="text-align:right;padding:3px 8px;font-weight:500">Net billing</th>
+              <th style="text-align:right;padding:3px 8px;font-weight:500;color:#1d4ed8">Job cashflow</th>
+            </tr></thead><tbody>`;
+
+    jobDetails.forEach(d => {
+      const jCash = d.jNet - d.jCost - d.jLiab;
+      detailHtml += `<tr style="border-top:0.5px solid #eee">
+        <td style="padding:4px 8px"><strong>${d.name}</strong>${d.client?`<span style="color:#888;font-weight:400"> — ${d.client}</span>`:''}
+          <div style="font-size:10px;color:#aaa">Labour/overhead: this month &nbsp;|&nbsp; Materials/billing: prev month</div>
+        </td>
+        <td style="text-align:right;padding:4px 8px">${d.jL>0?fmt(d.jL):'—'}</td>
+        <td style="text-align:right;padding:4px 8px">${d.jM>0?fmt(d.jM):'—'}</td>
+        <td style="text-align:right;padding:4px 8px">${d.jO>0?fmt(d.jO):'—'}</td>
+        <td style="text-align:right;padding:4px 8px">${d.jGross>0?fmt(d.jGross):'—'}</td>
+        <td style="text-align:right;padding:4px 8px;color:#dc2626">${d.jRet>0?'-'+fmt(d.jRet):'—'}</td>
+        <td style="text-align:right;padding:4px 8px">${d.jNet>0?fmt(d.jNet):'—'}</td>
+        <td style="text-align:right;padding:4px 8px;font-weight:600" class="${jCash>=0?'green':'red'}">${jCash>=0?'+':''}${fmt(jCash)}</td>
+      </tr>`;
+    });
+
+    if (liabDetails.length) {
+      detailHtml += `<tr style="border-top:1px solid #ddd;background:#f0f0f0">
+        <td style="padding:4px 8px;font-weight:500;color:#6d28d9" colspan="3">Liabilities this month</td>
+        <td colspan="5" style="padding:4px 8px">`;
+      liabDetails.forEach(l => {
+        detailHtml += `<span style="color:#6d28d9;margin-right:12px">${l.name}: ${fmt(l.amount)}</span>`;
+      });
+      detailHtml += `</td></tr>`;
+    }
+
+    detailHtml += `</tbody></table></div></td></tr>`;
+    tbl += detailHtml;
   });
 
   tbl += `<tr style="background:#f0f0f0;font-weight:600">
