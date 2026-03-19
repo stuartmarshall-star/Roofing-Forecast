@@ -402,6 +402,7 @@ async function loadJobs() {
     isConnected = true;
     setStatus('connected', 'Connected — all changes save automatically and sync live with your accountant');
     setupRealtime();
+    initForecastControls();
     renderAll();
   } catch(e) {
     isConnected = false;
@@ -902,12 +903,17 @@ function setActual(jobIdx, month, field, val) {
   saveTimer = setTimeout(() => dbSave(jobs[jobIdx]), 800);
 }
 
+function getEarliestJobStart() {
+  if (!jobs.length) return getCurrentMonth();
+  return jobs.reduce((earliest, j) => j.start < earliest ? j.start : earliest, jobs[0].start);
+}
+
 function initForecastControls() {
-  const cur = getCurrentMonth();
-  fcStartMonth = cur;
+  const start = getEarliestJobStart();
+  fcStartMonth = start;
   fcLength = 12;
   const startEl = document.getElementById('fc-start');
-  if (startEl) startEl.value = cur;
+  if (startEl) startEl.value = start;
   const lenEl = document.getElementById('fc-length');
   if (lenEl) lenEl.value = '12';
 }
