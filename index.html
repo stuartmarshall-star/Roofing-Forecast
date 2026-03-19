@@ -573,6 +573,8 @@ function addMonths(ym, n) {
   return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
 }
 
+function prevMonth(ym) { return addMonths(ym, -1); }
+
 function getRetentionTotal(job) {
   return job.contract * (job.retention / 100);
 }
@@ -1109,28 +1111,45 @@ function renderForecastSection() {
   const rangeEl = document.getElementById('fc-range-label');
   if (rangeEl) rangeEl.textContent = monthLabel(allMonths[0]) + ' – ' + monthLabel(allMonths[allMonths.length - 1]) + ' (' + allMonths.length + ' months)';
 
+  // Helper: get gross billing and retention for a job in a given month
+  function getJobBillingForMonth(j, month) {
+    const ms = getMonths(j.start, j.dur);
+    if (!ms.includes(month)) return { gross: 0, ret: 0 };
+    const grossPerMonth = j.contract / j.dur;
+    const retPerMonth = grossPerMonth * (j.retention / 100);
+    const netBilling = buildSchedule(j,'billing')[month].value;
+    const gross = netBilling + retPerMonth;
+    return { gross, ret: retPerMonth };
+  }
+
   const rows = allMonths.map(m => {
+    const mPrev = prevMonth(m); // previous month — for lagged materials and billing
+
     let tL=0, tM=0, tO=0, tGrossBilling=0, tRetHeld=0;
     jobs.forEach(j => {
-      const ms = getMonths(j.start, j.dur); if (!ms.includes(m)) return;
-      tL += buildSchedule(j,'labour')[m].value;
-      tM += buildSchedule(j,'materials')[m].value;
-      tO += buildSchedule(j,'overhead')[m].value;
-      // Gross billing per month = contract / duration (evenly spread), adjusted by actuals
-      const grossPerMonth = j.contract / j.dur;
-      const retPerMonth = grossPerMonth * (j.retention / 100);
-      // Use net billing schedule value + add retention back to get gross
-      const netBilling = buildSchedule(j,'billing')[m].value;
-      const grossBilling = netBilling + retPerMonth;
-      tGrossBilling += grossBilling;
-      tRetHeld += retPerMonth;
+      const ms = getMonths(j.start, j.dur);
+      // Labour — paid in the month it occurs
+      if (ms.includes(m)) {
+        tL += buildSchedule(j,'labour')[m].value;
+        tO += buildSchedule(j,'overhead')[m].value;
+      }
+      // Materials — paid following month (30 day account)
+      // So this month's materials cash out = last month's materials cost
+      if (ms.includes(mPrev)) {
+        tM += buildSchedule(j,'materials')[mPrev].value;
+      }
+      // Billing — received end of following month (30 day payment terms)
+      // So this month's cash in = last month's gross billing
+      const prevBilling = getJobBillingForMonth(j, mPrev);
+      tGrossBilling += prevBilling.gross;
+      tRetHeld += prevBilling.ret;
     });
+
     const tC = tL + tM + tO;
     const tLiab = getTotalLiabilitiesForMonth(m);
     const tRetReceived = getRetentionReceivedForMonth(m);
-    // Net billing received = gross billing - retention held this month
     const tNetBilling = tGrossBilling - tRetHeld;
-    // Operating cashflow = net billing + retention received - costs - liabilities
+    // Operating cashflow = net billing received + retention received - costs - liabilities
     const cash = tNetBilling + tRetReceived - tC - tLiab;
     return {m, tL, tM, tO, tC, tGrossBilling, tRetHeld, tNetBilling, tLiab, tRetReceived, cash};
   });
@@ -1155,7 +1174,7 @@ function renderForecastSection() {
       <span style="display:flex;align-items:center;gap:5px"><span style="width:24px;height:2px;background:#1d4ed8;display:inline-block"></span>Monthly cashflow</span>
       <span style="display:flex;align-items:center;gap:5px"><span style="width:24px;height:2px;background:#7c3aed;border-top:2px dashed #7c3aed;display:inline-block"></span>Cumulative cash</span>
     </div>
-    <div style="font-size:12px;color:#888;margin-bottom:1rem">Retention deducted from billing until marked received in the <button onclick="showTab('retentions')" style="background:none;border:none;color:#1d4ed8;cursor:pointer;font-size:12px;padding:0;text-decoration:underline">Retentions tab</button>.</div>
+    <div style="font-size:12px;color:#888;margin-bottom:1rem">Labour and overhead paid in month incurred. Materials on 30-day account (paid following month). Income received end of following month. Retention deducted until marked received in the <button onclick="showTab('retentions')" style="background:none;border:none;color:#1d4ed8;cursor:pointer;font-size:12px;padding:0;text-decoration:underline">Retentions tab</button>.</div>
     <div style="position:relative;width:100%;height:${chartH}px;margin-bottom:1.5rem"><canvas id="forecastChart"></canvas></div>
     <div id="ftable"></div>`;
 
@@ -1190,30 +1209,48 @@ function renderForecastSection() {
   const totNet=totGross-totRetHeld;
   const totCash=totNet+totRetRec-totC-totLiab;
 
-  let tbl = '<div class="card" style="padding:0;overflow:hidden;margin-top:1rem;overflow-x:auto"><table><thead><tr><th>Month</th><th>Labour</th><th>Materials</th><th>Overhead</th><th>Job costs</th><th>Liabilities</th><th>Gross billing</th><th>Retention held</th><th>Net billing</th><th>Retention received</th><th>Monthly cashflow</th><th>Cumulative cash</th></tr></thead><tbody>';
+  let tbl = `<div style="font-size:11px;color:#888;margin-bottom:.5rem">
+    Costs = labour (this month) + materials (prev month) + overhead + liabilities.
+    Billing = previous month net of retention.
+  </div>
+  <div class="card" style="padding:0;overflow:hidden;margin-top:.25rem">
+  <table style="font-size:13px">
+  <thead><tr>
+    <th>Month</th>
+    <th title="Labour this month + materials from prev month + overhead + liabilities">Total costs</th>
+    <th>Net billing</th>
+    <th>Ret. received</th>
+    <th>Monthly cash</th>
+    <th style="border-left:2px solid #e8e8e8">Cumulative</th>
+  </tr></thead><tbody>`;
+
   rows.forEach(r => {
     const cur = getCurrentMonth();
     const rowBg = r.m < cur ? 'background:#fafafa' : '';
     const retRecCell = r.tRetReceived > 0 ? `<span style="color:#0f766e;font-weight:600">+${fmt(r.tRetReceived)}</span>` : '<span style="color:#ccc">—</span>';
     const cumClass = r.cumCash >= 0 ? 'green' : 'red';
+    // Tooltip on costs showing breakdown
+    const costTip = `Labour: ${fmt(r.tL)} | Materials: ${fmt(r.tM)} | Overhead: ${fmt(r.tO)} | Liabilities: ${fmt(r.tLiab)}`;
     tbl += `<tr style="${rowBg}">
       <td style="white-space:nowrap">${monthLabel(r.m)}</td>
-      <td>${fmt(r.tL)}</td><td>${fmt(r.tM)}</td><td>${fmt(r.tO)}</td>
-      <td><strong>${fmt(r.tC)}</strong></td>
-      <td class="red">${r.tLiab>0?fmt(r.tLiab):'<span style="color:#ccc">—</span>'}</td>
-      <td>${fmt(r.tGrossBilling)}</td>
-      <td class="red">${r.tRetHeld>0?fmt(r.tRetHeld):'<span style="color:#ccc">—</span>'}</td>
-      <td><strong>${fmt(r.tNetBilling)}</strong></td>
+      <td title="${costTip}" style="cursor:help">
+        <strong>${fmt(r.tC + r.tLiab)}</strong>
+        <div style="font-size:11px;color:#888">L:${fmt(r.tL)} M:${fmt(r.tM)} O:${fmt(r.tO)}${r.tLiab>0?' Lb:'+fmt(r.tLiab):''}</div>
+      </td>
+      <td>
+        <strong>${fmt(r.tNetBilling)}</strong>
+        <div style="font-size:11px;color:#888">Gross:${fmt(r.tGrossBilling)}${r.tRetHeld>0?' Ret:-'+fmt(r.tRetHeld):''}</div>
+      </td>
       <td>${retRecCell}</td>
       <td class="${r.cash>=0?'green':'red'}"><strong>${r.cash>=0?'+':''}${fmt(r.cash)}</strong></td>
       <td class="${cumClass}" style="font-weight:600;border-left:2px solid #e8e8e8">${r.cumCash>=0?'+':''}${fmt(r.cumCash)}</td>
     </tr>`;
   });
+
   tbl += `<tr style="background:#f0f0f0;font-weight:600">
-    <td>Total</td><td>${fmt(totL)}</td><td>${fmt(totM)}</td><td>${fmt(totO)}</td>
-    <td>${fmt(totC)}</td><td class="red">${fmt(totLiab)}</td>
-    <td>${fmt(totGross)}</td><td class="red">${fmt(totRetHeld)}</td>
-    <td>${fmt(totNet)}</td>
+    <td>Total</td>
+    <td>${fmt(totC+totLiab)}<div style="font-size:11px;font-weight:400;color:#666">L:${fmt(totL)} M:${fmt(totM)} O:${fmt(totO)}${totLiab>0?' Lb:'+fmt(totLiab):''}</div></td>
+    <td>${fmt(totNet)}<div style="font-size:11px;font-weight:400;color:#666">Gross:${fmt(totGross)} Ret:-${fmt(totRetHeld)}</div></td>
     <td style="color:#0f766e">${totRetRec>0?'+'+fmt(totRetRec):'—'}</td>
     <td class="${totCash>=0?'green':'red'}">${totCash>=0?'+':''}${fmt(totCash)}</td>
     <td style="border-left:2px solid #e8e8e8"></td>
