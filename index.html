@@ -1421,11 +1421,7 @@ const CSV_HEADERS = [
 ];
 
 function downloadCsvTemplate() {
-  const rows = [
-    CSV_HEADERS.join(','),
-    'RF-2025-001,Henderson Property,14 Mill Lane reroofing,active,Nov-25,8,65000,22000,19000,3500,5,30,12,,,,'
-  ];
-  triggerCsvDownload(rows.join('\n'), 'job-import-template.csv');
+  triggerCsvDownload(CSV_HEADERS.join(','), 'job-import-template.csv');
 }
 
 let csvParsedRows = [];
@@ -1588,13 +1584,7 @@ const LIAB_CATEGORIES  = ['loan','hire','lease','insurance','tax','other'];
 const LIAB_CAT_LABELS  = { loan:'Loan repayment', hire:'Hire purchase', lease:'Lease / rent', insurance:'Insurance', tax:'Tax / HMRC', other:'Other' };
 
 function downloadLiabTemplate() {
-  const rows = [
-    LIAB_CSV_HEADERS.join(','),
-    'Van finance,hire,450,Jan-25,48,no,Ford Transit',
-    'Workshop lease,lease,800,Jan-24,,yes,Monthly rent',
-    'Insurance,insurance,220,Apr-25,12,no,Annual premium'
-  ];
-  triggerCsvDownload(rows.join('\n'), 'liabilities-import-template.csv');
+  triggerCsvDownload(LIAB_CSV_HEADERS.join(','), 'liabilities-import-template.csv');
 }
 
 let liabImportRows = [];
@@ -1701,14 +1691,7 @@ const CREDITS_CSV_HEADERS = ['name','category','amount','expected_month','ref','
 const CREDITS_CATEGORIES  = ['retention','variation','contra','other'];
 
 function downloadCreditsTemplate() {
-  const rows = [
-    CREDITS_CSV_HEADERS.join(','),
-    'Retention — 14 Mill Lane,retention,6250,Apr-26,RF-2024-003,First moiety on completion',
-    'Retention — Oak Street,retention,3125,Jun-26,RF-2024-007,Second moiety after defects',
-    'VO#3 extra works,variation,4800,Mar-26,RF-2025-001,Agreed variation order',
-    'Scaffold contra recovery,contra,1200,May-26,,Recovery from subcontractor'
-  ];
-  triggerCsvDownload(rows.join('\n'), 'credits-import-template.csv');
+  triggerCsvDownload(CREDITS_CSV_HEADERS.join(','), 'credits-import-template.csv');
 }
 
 let creditsImportRows = [];
@@ -1816,13 +1799,7 @@ async function confirmCreditsImport() {
 const ACTUALS_CSV_HEADERS = ['job_ref','month','labour','materials','overhead','billing_received'];
 
 function downloadActualsTemplate() {
-  const rows = [
-    ACTUALS_CSV_HEADERS.join(','),
-    'RF-2025-001,Oct-25,5000,15000,200,23750',
-    'RF-2025-001,Nov-25,5000,15000,200,23750',
-    'RF-2025-002,Nov-25,8000,22000,350,47500'
-  ];
-  triggerCsvDownload(rows.join('\n'), 'actuals-import-template.csv');
+  triggerCsvDownload(ACTUALS_CSV_HEADERS.join(','), 'actuals-import-template.csv');
 }
 
 let actualsImportRows = [];
