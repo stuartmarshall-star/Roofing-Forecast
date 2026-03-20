@@ -147,8 +147,11 @@
       <h1>Roofing Forecast</h1>
       <p id="period-label"></p>
     </div>
-    <div style="display:flex;gap:10px;align-items:center">
+    <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
       <span class="saving" id="saving-indicator"></span>
+      <button class="btn" onclick="downloadCsvTemplate()" title="Download CSV template">⬇ Template</button>
+      <button class="btn" onclick="document.getElementById('csv-file-input').click()">⬆ Import CSV</button>
+      <input type="file" id="csv-file-input" accept=".csv" style="display:none" onchange="handleCsvImport(this)">
       <button class="btn btn-primary" onclick="openAddJob()">+ Add job</button>
     </div>
   </div>
@@ -247,12 +250,24 @@
   </div>
 </div>
 
+<!-- CSV Import Preview Modal -->
+<div class="modal-backdrop" id="import-modal-backdrop">
+  <div class="modal" style="width:min(820px,96vw)">
+    <div class="modal-title">Import jobs — preview</div>
+    <div id="import-preview-content"></div>
+    <div class="modal-footer">
+      <button class="btn" onclick="closeImportModal()">Cancel</button>
+      <button class="btn btn-primary" id="import-confirm-btn" onclick="confirmImport()">Import valid rows</button>
+    </div>
+  </div>
+</div>
+
 <!-- Add/Edit Job Modal -->
 <div class="modal-backdrop" id="modal-backdrop">
   <div class="modal">
     <div class="modal-title" id="modal-title">Add job</div>
     <div class="form-grid">
-      <div><label>Job name</label><input id="f-name" placeholder="e.g. Oak Street reroofing"></div>
+      <div><label>Job reference</label><input id="f-name" placeholder="e.g. RF-2025-001"></div>
       <div><label>Client</label><input id="f-client" placeholder="Client name"></div>
       <div><label>Status</label><select id="f-status"><option value="active">Active</option><option value="future">Future</option><option value="complete">Complete</option></select></div>
     </div>
@@ -447,7 +462,7 @@ function dbToJob(row) {
     materials: parseFloat(row.materials) || 0, overhead: parseFloat(row.overhead) || 0,
     retention: parseFloat(row.retention) || 0,
     moiety: parseInt(row.moiety) || 12,
-    paymentTerms: parseInt(row.payment_terms) || 1,
+    paymentTerms: row.payment_terms !== null && row.payment_terms !== undefined ? parseInt(row.payment_terms) : 1,
     retentionReleases: row.retention_releases || { m1: false, m2: false },
     retentionReceivedDates: row.retention_received_dates || {},
     retentionInvoiceDates: row.retention_invoice_dates || {},
@@ -1033,7 +1048,7 @@ function renderJobsTable() {
   const el = document.getElementById('jobs');
   if (!jobs.length) { el.innerHTML = '<div class="empty-state">No jobs yet — click "+ Add job" to get started.</div>'; return; }
   const cur = getCurrentMonth();
-  let html = '<div class="card" style="padding:0;overflow:hidden;overflow-x:auto"><table><thead><tr><th>Job</th><th>Client</th><th>Period</th><th>Contract</th><th>Labour</th><th>Materials</th><th>Overhead</th><th>Total cost</th><th>Margin</th><th>Progress</th><th>Status</th><th></th></tr></thead><tbody>';
+  let html = '<div class="card" style="padding:0;overflow:hidden;overflow-x:auto"><table><thead><tr><th>Job ref</th><th>Client</th><th>Period</th><th>Contract</th><th>Labour</th><th>Materials</th><th>Overhead</th><th>Total cost</th><th>Margin</th><th>Progress</th><th>Status</th><th></th></tr></thead><tbody>';
   let totContract=0, totLabour=0, totMaterials=0, totOverhead=0;
   jobs.forEach((j, i) => {
     const tc = j.labour + j.materials + j.overhead;
@@ -1076,6 +1091,174 @@ function renderJobsTable() {
     <td></td><td></td><td></td>
   </tr>`;
   el.innerHTML = html + '</tbody></table></div>';
+}
+
+// ── CSV import / export ───────────────────────────────────────────────────────
+const CSV_HEADERS = [
+  'job_ref','client','status','start_month','duration',
+  'contract_gross','labour_cost','materials_cost','overhead_cost',
+  'retention_pct','payment_terms','defects_period',
+  'labour_paid_to_date','materials_paid_to_date','overhead_paid_to_date','cash_received_to_date'
+];
+
+function downloadCsvTemplate() {
+  const rows = [
+    CSV_HEADERS.join(','),
+    'RF-2025-001,Henderson Property,active,Nov-25,8,65000,22000,19000,3500,5,30,12,,,,'
+  ];
+  const blob = new Blob([rows.join('\n')], { type: 'text/csv' });
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
+  a.download = 'job-import-template.csv'; a.click();
+}
+
+let csvParsedRows = [];
+
+function parseStartMonth(val) {
+  if (!val) return null;
+  // MM/YYYY e.g. 11/2025
+  const slash = val.match(/^(\d{1,2})\/(\d{4})$/);
+  if (slash) return slash[2] + '-' + String(slash[1]).padStart(2, '0');
+  // YYYY-MM e.g. 2025-11
+  const dash = val.match(/^(\d{4})-(\d{2})$/);
+  if (dash) return val;
+  // Mon-YY e.g. Dec-25 or Dec-2025
+  const monYY = val.match(/^([A-Za-z]{3})-(\d{2}|\d{4})$/);
+  if (monYY) {
+    const months = { jan:'01',feb:'02',mar:'03',apr:'04',may:'05',jun:'06',jul:'07',aug:'08',sep:'09',oct:'10',nov:'11',dec:'12' };
+    const m = months[monYY[1].toLowerCase()];
+    if (!m) return null;
+    const y = monYY[2].length === 2 ? '20' + monYY[2] : monYY[2];
+    return y + '-' + m;
+  }
+  return null;
+}
+
+function handleCsvImport(input) {
+  const file = input.files[0]; if (!file) return;
+  const reader = new FileReader();
+  reader.onload = e => {
+    const text = e.target.result;
+    const lines = text.split(/\r?\n/).filter(l => l.trim());
+    if (lines.length < 2) { alert('CSV appears empty.'); return; }
+    const headers = lines[0].split(',').map(h => h.trim().toLowerCase().replace(/\s+/g,'_'));
+    const rows = [];
+    for (let i = 1; i < lines.length; i++) {
+      const vals = lines[i].split(',').map(v => v.trim());
+      const row = {}; headers.forEach((h, idx) => { row[h] = vals[idx] || ''; });
+      const errors = [];
+      const jobRef    = row.job_ref || row.name || '';
+      const client    = row.client || '';
+      const status    = ['active','future','complete'].includes((row.status||'').toLowerCase()) ? row.status.toLowerCase() : 'active';
+      const start     = parseStartMonth(row.start_month || '');
+      const dur       = parseInt(row.duration) || 0;
+      const contract  = parseFloat(row.contract_gross) || 0;
+      const labour    = parseFloat(row.labour_cost) || 0;
+      const materials = parseFloat(row.materials_cost) || 0;
+      const overhead  = parseFloat(row.overhead_cost) || 0;
+      const retention = parseFloat(row.retention_pct) || 0;
+      const terms     = parseInt(row.payment_terms) === 45 ? 2 : 1;
+      const moiety    = parseInt(row.defects_period) === 24 ? 24 : 12;
+      const labTD     = parseFloat(row.labour_paid_to_date) || 0;
+      const matTD     = parseFloat(row.materials_paid_to_date) || 0;
+      const ovhTD     = parseFloat(row.overhead_paid_to_date) || 0;
+      const bilTD     = parseFloat(row.cash_received_to_date) || 0;
+      if (!jobRef)       errors.push('Missing job reference');
+      if (!start)        errors.push(`Invalid start month "${row.start_month}" — use Dec-25, 12/2025 or 2025-12`);
+      if (dur < 1)       errors.push('Duration must be at least 1');
+      if (contract <= 0) errors.push('Contract gross must be > 0');
+      if (jobs.some(j => j.name.toLowerCase() === jobRef.toLowerCase())) errors.push(`Job ref "${jobRef}" already exists — will be skipped`);
+      rows.push({ jobRef, client, status, start, dur, contract, labour, materials, overhead, retention, terms, moiety, labTD, matTD, ovhTD, bilTD, errors, valid: errors.length === 0 });
+    }
+    csvParsedRows = rows;
+    showImportPreview(rows);
+  };
+  reader.readAsText(file);
+  input.value = '';
+}
+
+function showImportPreview(rows) {
+  const validCount = rows.filter(r => r.valid).length;
+  const invalidCount = rows.length - validCount;
+  let html = `<div style="margin-bottom:1rem;font-size:13px">
+    <span style="color:#16a34a;font-weight:500">${validCount} row${validCount!==1?'s':''} ready to import</span>
+    ${invalidCount > 0 ? `&nbsp;|&nbsp; <span style="color:#dc2626">${invalidCount} with errors (will be skipped)</span>` : ''}
+  </div>
+  <div style="overflow-x:auto;max-height:400px;overflow-y:auto">
+  <table style="font-size:12px;width:100%;border-collapse:collapse">
+  <thead style="position:sticky;top:0;background:#f0f0f0">
+    <tr>
+      <th style="padding:6px 8px;text-align:left;border-bottom:1px solid #ddd"></th>
+      <th style="padding:6px 8px;text-align:left;border-bottom:1px solid #ddd">Job ref</th>
+      <th style="padding:6px 8px;text-align:left;border-bottom:1px solid #ddd">Client</th>
+      <th style="padding:6px 8px;text-align:left;border-bottom:1px solid #ddd">Start</th>
+      <th style="padding:6px 8px;text-align:left;border-bottom:1px solid #ddd">Months</th>
+      <th style="padding:6px 8px;text-align:left;border-bottom:1px solid #ddd">Contract</th>
+      <th style="padding:6px 8px;text-align:left;border-bottom:1px solid #ddd">Labour</th>
+      <th style="padding:6px 8px;text-align:left;border-bottom:1px solid #ddd">Materials</th>
+      <th style="padding:6px 8px;text-align:left;border-bottom:1px solid #ddd">Overhead</th>
+      <th style="padding:6px 8px;text-align:left;border-bottom:1px solid #ddd">Issues</th>
+    </tr>
+  </thead><tbody>`;
+  rows.forEach(r => {
+    const bg = r.valid ? '' : 'background:#fef2f2';
+    const icon = r.valid ? '<span style="color:#16a34a;font-weight:600">✓</span>' : '<span style="color:#dc2626;font-weight:600">✗</span>';
+    html += `<tr style="${bg};border-bottom:1px solid #f0f0f0">
+      <td style="padding:5px 8px">${icon}</td>
+      <td style="padding:5px 8px;font-weight:500">${r.jobRef||'—'}</td>
+      <td style="padding:5px 8px">${r.client||'—'}</td>
+      <td style="padding:5px 8px">${r.start ? monthLabel(r.start) : '—'}</td>
+      <td style="padding:5px 8px">${r.dur||'—'}</td>
+      <td style="padding:5px 8px">£${(r.contract||0).toLocaleString('en-GB')}</td>
+      <td style="padding:5px 8px">£${(r.labour||0).toLocaleString('en-GB')}</td>
+      <td style="padding:5px 8px">£${(r.materials||0).toLocaleString('en-GB')}</td>
+      <td style="padding:5px 8px">£${(r.overhead||0).toLocaleString('en-GB')}</td>
+      <td style="padding:5px 8px;color:#dc2626;font-size:11px">${r.errors.join(', ')}</td>
+    </tr>`;
+  });
+  html += '</tbody></table></div>';
+  document.getElementById('import-preview-content').innerHTML = html;
+  document.getElementById('import-confirm-btn').disabled = validCount === 0;
+  document.getElementById('import-modal-backdrop').classList.add('open');
+}
+
+function closeImportModal() {
+  document.getElementById('import-modal-backdrop').classList.remove('open');
+  csvParsedRows = [];
+}
+
+async function confirmImport() {
+  const validRows = csvParsedRows.filter(r => r.valid);
+  if (!validRows.length) return;
+  setSaving('Importing...');
+  closeImportModal();
+  for (const r of validRows) {
+    let actuals = {};
+    const hasToDate = r.labTD || r.matTD || r.ovhTD || r.bilTD;
+    if (hasToDate && r.start) {
+      const cur = getCurrentMonth();
+      const elapsed = getMonths(r.start, r.dur).filter(m => m < cur);
+      if (elapsed.length > 0) {
+        const n = elapsed.length;
+        const netBil = r.bilTD * (1 - r.retention / 100);
+        elapsed.forEach(m => {
+          actuals[m] = { labour: r.labTD/n, materials: r.matTD/n, overhead: r.ovhTD/n, billing: netBil/n };
+        });
+      }
+    }
+    const job = {
+      name: r.jobRef, client: r.client, status: r.status,
+      start: r.start, dur: r.dur, contract: r.contract,
+      labour: r.labour, materials: r.materials, overhead: r.overhead,
+      retention: r.retention, moiety: r.moiety, paymentTerms: r.terms,
+      retentionReleases: { m1: false, m2: false },
+      retentionReceivedDates: {}, retentionInvoiceDates: {}, actuals
+    };
+    jobs.push(job);
+    await dbSave(job);
+  }
+  setSaving(`Imported ${validRows.length} job${validRows.length!==1?'s':''} ✓`);
+  setTimeout(() => setSaving(''), 3000);
+  renderAll();
 }
 
 function setActualsJob(idx) { activeActualsJob = idx; renderActualsSection(); }
@@ -1217,7 +1400,8 @@ function renderActualsSection() {
     </div>`;
 
   // Original simple table
-  let tbl = '<div class="card" style="padding:0;overflow:hidden"><table><thead><tr><th>Month</th><th>Labour</th><th>Materials</th><th>Overhead</th><th>Total cost</th><th>Billing recv.</th><th>Cashflow</th><th>Type</th></tr></thead><tbody>';
+  // Note: cashflow column applies cash timing — materials paid following month, billing received per payment terms
+  let tbl = '<div class="card" style="padding:0;overflow:hidden"><table><thead><tr><th>Month</th><th>Labour</th><th>Materials <span style="font-size:10px;color:#888;font-weight:400">(incurred)</span></th><th>Overhead</th><th>Total cost</th><th>Billing recv. <span style="font-size:10px;color:#888;font-weight:400">(incurred)</span></th><th>Type</th></tr></thead><tbody>';
 
   months.forEach(m => {
     const isPast = m < cur;
@@ -1242,7 +1426,6 @@ function renderActualsSection() {
       ${['labour','materials','overhead'].map(f => `<td>${cell(f)}</td>`).join('')}
       <td style="font-weight:500">${fmt(tc)}</td>
       <td>${cell('billing')}</td>
-      <td class="${cash >= 0 ? 'green' : 'red'}" style="font-weight:500">${cash >= 0 ? '+' : ''}${fmt(cash)}</td>
       <td><span class="badge badge-${rowType}">${rowType}</span></td>
     </tr>`;
   });
@@ -1252,11 +1435,16 @@ function renderActualsSection() {
   const tC=tL+tM+tO;
   tbl += `<tr style="background:#f9fafb;font-weight:600">
     <td>Total</td><td>${fmt(tL)}</td><td>${fmt(tM)}</td><td>${fmt(tO)}</td>
-    <td>${fmt(tC)}</td><td>${fmt(tB)}</td>
-    <td class="${tB-tC>=0?'green':'red'}">${tB-tC>=0?'+':''}${fmt(tB-tC)}</td><td></td>
+    <td>${fmt(tC)}</td><td>${fmt(tB)}</td><td></td>
   </tr>`;
 
-  el.innerHTML = pills + jobHeader + bal + chartSection + legend + tbl + '</tbody></table></div>';
+  const cashTimingNote = `<div style="font-size:12px;color:#888;margin-bottom:.75rem">
+    Figures show costs and billing in the month they are <strong>incurred</strong> — not when cash moves.
+    Materials are paid the following month, billing received per payment terms.
+    See the <button onclick="showTab('forecast')" style="background:none;border:none;color:#1d4ed8;cursor:pointer;font-size:12px;padding:0;text-decoration:underline">Forecast tab</button> for cash-timed figures.
+  </div>`;
+
+  el.innerHTML = pills + jobHeader + bal + cashTimingNote + chartSection + legend + tbl + '</tbody></table></div>';
 
   // Render chart after DOM is set
   const actCtx = document.getElementById('actualsChart');
@@ -1328,10 +1516,10 @@ function getForecastMonths() {
     jobs.forEach(j => {
       const ms = getMonths(j.start, j.dur);
       if (!earliest || ms[0] < earliest) earliest = ms[0];
-      // Extend latest by max payment terms so final billing month is captured
-      const maxLag = j.paymentTerms || 1;
+      // Extend by payment lag months so final billing arrives in the forecast window
+      const lagMonths = (j.paymentTerms >= 2) ? 2 : 1;
       const lastJobMonth = ms[ms.length - 1];
-      const extendedEnd = addMonths(lastJobMonth, maxLag);
+      const extendedEnd = addMonths(lastJobMonth, lagMonths);
       if (!latest || extendedEnd > latest) latest = extendedEnd;
     });
     const months = [];
@@ -1413,7 +1601,7 @@ function renderForecastSection() {
       // Billing — received based on payment terms per job
       // 30 days (terms=1): income from previous month's billing
       // 45 days (terms=2): income from 2 months ago billing
-      const billingMonth = j.paymentTerms === 2 ? mPrev2 : mPrev;
+      const billingMonth = (j.paymentTerms >= 2) ? mPrev2 : mPrev;
       const prevBilling = getJobBillingForMonth(j, billingMonth);
       tGrossBilling += prevBilling.gross;
       tRetHeld += prevBilling.ret;
@@ -1537,7 +1725,8 @@ function renderForecastSection() {
       const jL  = hasThisMonth ? buildSchedule(j,'labour')[r.m].value : 0;
       const jO  = hasThisMonth ? buildSchedule(j,'overhead')[r.m].value : 0;
       const jM  = hasPrevMonth ? buildSchedule(j,'materials')[mPrev].value : 0;
-      const prevBil = getJobBillingForMonth(j, mPrev);
+      const jBillingMonth = (j.paymentTerms >= 2) ? prevMonth(mPrev) : mPrev;
+      const prevBil = getJobBillingForMonth(j, jBillingMonth);
       const jGross = prevBil.gross;
       const jRet   = prevBil.ret;
       const jNet   = jGross - jRet;
