@@ -175,6 +175,7 @@
   <div class="tabs">
     <button class="tab active" onclick="showTab('jobs')">All jobs</button>
     <button class="tab" onclick="showTab('actuals')">Enter actuals</button>
+    <button class="tab" onclick="showTab('variance')">Variance report</button>
     <button class="tab" onclick="showTab('liabilities')">Liabilities</button>
     <button class="tab" onclick="showTab('retentions')">Retentions</button>
     <button class="tab" onclick="showTab('forecast')">Forecast</button>
@@ -182,6 +183,7 @@
 
   <div id="jobs" class="section active"><div class="empty-state">Connecting...</div></div>
   <div id="actuals" class="section"></div>
+  <div id="variance" class="section"></div>
   <div id="liabilities" class="section"></div>
   <div id="retentions" class="section"></div>
   <div id="forecast" class="section">
@@ -1119,6 +1121,20 @@ function renderActualsSection() {
   bal += '</div>';
 
   const bs = getSummary(j, 'billing'), bpct = bs.originalTotal > 0 ? Math.round(bs.actualSpent / bs.originalTotal * 100) : 0;
+
+  // Margin calculations
+  const sL = getSummary(j, 'labour'), sM = getSummary(j, 'materials'), sO = getSummary(j, 'overhead');
+  // Forecast margin — full job
+  const fcTotalCost = j.labour + j.materials + j.overhead;
+  const fcNet = j.contract * (1 - j.retention / 100);
+  const fcMargin = fcNet > 0 ? (fcNet - fcTotalCost) / fcNet * 100 : 0;
+  // Actual margin to date — based on actuals entered
+  const actCost = sL.actualSpent + sM.actualSpent + sO.actualSpent;
+  const actBilling = bs.actualSpent;
+  const actMargin = actBilling > 0 ? (actBilling - actCost) / actBilling * 100 : null;
+  const marginDiff = actMargin !== null ? actMargin - fcMargin : null;
+  const marginCls = actMargin !== null ? (actMargin >= fcMargin ? 'green' : 'red') : '';
+
   bal += `<div class="balance-strip">
     <div class="balance-box" style="grid-column:span 2">
       <div class="balance-box-label">Billing received (excl. retention) — contract ${fmt(j.contract)}, retention ${j.retention}%</div>
@@ -1134,6 +1150,31 @@ function renderActualsSection() {
       <div class="balance-box-val">${fmt(['labour','materials','overhead'].reduce((s,f) => s + getSummary(j, f).balance, 0))}</div>
       <div style="font-size:11px;color:#888;margin-top:2px">Forecast spend still to come</div>
     </div>
+  </div>
+  <div class="balance-strip">
+    <div class="balance-box">
+      <div class="balance-box-label">Forecast margin (whole job)</div>
+      <div class="balance-box-val">${fmtPct(fcMargin)}</div>
+      <div style="font-size:11px;color:#888;margin-top:2px">Net ${fmt(fcNet)} minus costs ${fmt(fcTotalCost)}</div>
+    </div>
+    <div class="balance-box">
+      <div class="balance-box-label">Actual margin to date</div>
+      <div class="balance-box-val ${marginCls}">${actMargin !== null ? fmtPct(actMargin) : '—'}</div>
+      <div style="font-size:11px;color:#888;margin-top:2px">
+        ${actMargin !== null
+          ? `Billing ${fmt(actBilling)} minus costs ${fmt(actCost)}`
+          : 'No actuals entered yet'}
+      </div>
+    </div>
+    <div class="balance-box">
+      <div class="balance-box-label">Margin variance</div>
+      <div class="balance-box-val ${marginCls}">${marginDiff !== null ? (marginDiff >= 0 ? '+' : '') + fmtPct(marginDiff) : '—'}</div>
+      <div style="font-size:11px;color:#888;margin-top:2px">
+        ${marginDiff !== null
+          ? (marginDiff >= 0 ? 'Ahead of forecast' : 'Behind forecast')
+          : 'Enter actuals to see variance'}
+      </div>
+    </div>
   </div>`;
 
   // Legend
@@ -1143,28 +1184,61 @@ function renderActualsSection() {
     <span><span class="badge badge-forecast" style="margin-right:4px">original forecast</span> Even spread, no actuals yet</span>
   </div>`;
 
-  // Table
+  // Build chart data — original forecast vs actual per month
+  const chartMonths = months;
+  const origFcL = j.labour / j.dur;
+  const origFcM = j.materials / j.dur;
+  const origFcO = j.overhead / j.dur;
+  const origFcB = j.contract * (1 - j.retention / 100) / j.dur;
+
+  const chartFcCost  = chartMonths.map(() => Math.round(origFcL + origFcM + origFcO));
+  const chartActCost = chartMonths.map(m => {
+    const a = j.actuals[m];
+    if (!a || (a.labour === undefined && a.materials === undefined && a.overhead === undefined)) return null;
+    return Math.round((a.labour||0) + (a.materials||0) + (a.overhead||0));
+  });
+  const chartFcBil  = chartMonths.map(() => Math.round(origFcB));
+  const chartActBil = chartMonths.map(m => {
+    const a = j.actuals[m];
+    if (!a || a.billing === undefined) return null;
+    return Math.round(a.billing||0);
+  });
+
+  const chartSection = `
+    <div class="card" style="padding:1rem 1.25rem;margin-bottom:1rem">
+      <div style="font-size:13px;font-weight:500;margin-bottom:.75rem;color:#1a1a1a">Forecast vs actual</div>
+      <div style="display:flex;gap:16px;font-size:12px;color:#888;margin-bottom:.5rem;flex-wrap:wrap">
+        <span style="display:flex;align-items:center;gap:5px"><span style="width:20px;height:2px;background:#dc2626;display:inline-block"></span>Forecast costs</span>
+        <span style="display:flex;align-items:center;gap:5px"><span style="width:20px;height:2px;background:#dc2626;border-top:2px dashed #dc2626;display:inline-block"></span>Actual costs</span>
+        <span style="display:flex;align-items:center;gap:5px"><span style="width:20px;height:2px;background:#1d4ed8;display:inline-block"></span>Forecast billing</span>
+        <span style="display:flex;align-items:center;gap:5px"><span style="width:20px;height:2px;background:#1d4ed8;border-top:2px dashed #1d4ed8;display:inline-block"></span>Actual billing</span>
+      </div>
+      <div style="position:relative;height:220px"><canvas id="actualsChart"></canvas></div>
+    </div>`;
+
+  // Original simple table
   let tbl = '<div class="card" style="padding:0;overflow:hidden"><table><thead><tr><th>Month</th><th>Labour</th><th>Materials</th><th>Overhead</th><th>Total cost</th><th>Billing recv.</th><th>Cashflow</th><th>Type</th></tr></thead><tbody>';
 
   months.forEach(m => {
-    const isPast = m <= cur, vals = {};
-    fields.forEach(f => { vals[f] = scheds[f][m]; });
+    const isPast = m < cur;
+    const isCurrentMonth = m === cur;
+    const vals = {}; fields.forEach(f => { vals[f] = scheds[f][m]; });
     const tc = vals.labour.value + vals.materials.value + vals.overhead.value;
     const cash = vals.billing.value - tc;
     const hasAct = fields.some(f => vals[f].type === 'actual');
     const hasRef = fields.some(f => vals[f].type === 'reforecast');
     const rowType = hasAct ? 'actual' : hasRef ? 'reforecast' : 'forecast';
-    const bg = hasAct ? 'background:#f9fafb' : '';
+    const bg = hasAct ? 'background:#f9fafb' : isCurrentMonth ? 'background:#fffbeb' : '';
 
     function cell(field) {
       const e = vals[field];
       const a = j.actuals[m] && j.actuals[m][field] !== undefined ? j.actuals[m][field] : '';
-      if (isPast) return `<input class="actual-input" type="number" placeholder="${Math.round(e.value)}" value="${a}" onchange="setActual(${activeActualsJob},'${m}','${field}',this.value)">`;
+      if (isPast || isCurrentMonth) return `<input class="actual-input" type="number" placeholder="${Math.round(e.value)}" value="${a}" onchange="setActual(${activeActualsJob},'${m}','${field}',this.value)">`;
       return `<span class="${e.type === 'reforecast' ? 'reforecast-val' : 'forecast-val'}">${fmt(e.value)}</span>`;
     }
 
     tbl += `<tr style="${bg}">
-      <td style="white-space:nowrap;font-weight:500">${monthLabel(m)}</td>
+      <td style="white-space:nowrap;font-weight:500">${monthLabel(m)}${isCurrentMonth ? ' <span style="font-size:10px;color:#d97706">now</span>' : ''}</td>
       ${['labour','materials','overhead'].map(f => `<td>${cell(f)}</td>`).join('')}
       <td style="font-weight:500">${fmt(tc)}</td>
       <td>${cell('billing')}</td>
@@ -1182,7 +1256,32 @@ function renderActualsSection() {
     <td class="${tB-tC>=0?'green':'red'}">${tB-tC>=0?'+':''}${fmt(tB-tC)}</td><td></td>
   </tr>`;
 
-  el.innerHTML = pills + jobHeader + bal + legend + tbl + '</tbody></table></div>';
+  el.innerHTML = pills + jobHeader + bal + chartSection + legend + tbl + '</tbody></table></div>';
+
+  // Render chart after DOM is set
+  const actCtx = document.getElementById('actualsChart');
+  if (actCtx) {
+    new Chart(actCtx.getContext('2d'), {
+      type: 'line',
+      data: {
+        labels: chartMonths.map(monthLabel),
+        datasets: [
+          { label: 'Forecast costs',  data: chartFcCost,  borderColor: '#dc2626', backgroundColor: 'transparent', borderWidth: 2, pointRadius: 2, tension: 0.3, borderDash: [] },
+          { label: 'Actual costs',    data: chartActCost, borderColor: '#dc2626', backgroundColor: 'transparent', borderWidth: 2, pointRadius: 3, tension: 0.3, borderDash: [5,3], spanGaps: false },
+          { label: 'Forecast billing',data: chartFcBil,   borderColor: '#1d4ed8', backgroundColor: 'transparent', borderWidth: 2, pointRadius: 2, tension: 0.3, borderDash: [] },
+          { label: 'Actual billing',  data: chartActBil,  borderColor: '#1d4ed8', backgroundColor: 'transparent', borderWidth: 2, pointRadius: 3, tension: 0.3, borderDash: [5,3], spanGaps: false },
+        ]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { display: false } },
+        scales: {
+          y: { ticks: { callback: v => '£'+(Math.abs(v)>=1000?(v/1000).toFixed(0)+'k':v), font:{size:11} }, grid:{color:'#f0f0f0'} },
+          x: { ticks: { font:{size:11}, maxRotation: months.length > 12 ? 45 : 0 }, grid:{display:false} }
+        }
+      }
+    });
+  }
 }
 
 function setActual(jobIdx, month, field, val) {
@@ -1738,11 +1837,11 @@ function renderRetentionsSection() {
 }
 
 function renderAll() {
-  renderMetrics(); renderJobsTable(); renderActualsSection(); renderLiabilitiesSection(); renderRetentionsSection(); renderForecastSection();
+  renderMetrics(); renderJobsTable(); renderActualsSection(); renderVarianceReport(); renderLiabilitiesSection(); renderRetentionsSection(); renderForecastSection();
 }
 
 function showTab(id) {
-  document.querySelectorAll('.tab').forEach((t, i) => t.classList.toggle('active', ['jobs','actuals','liabilities','retentions','forecast'][i] === id));
+  document.querySelectorAll('.tab').forEach((t, i) => t.classList.toggle('active', ['jobs','actuals','variance','liabilities','retentions','forecast'][i] === id));
   document.querySelectorAll('.section').forEach(s => s.classList.toggle('active', s.id === id));
 }
 
@@ -1904,6 +2003,190 @@ async function deleteJob(idx) {
   const id = jobs[idx].id; jobs.splice(idx, 1);
   if (activeActualsJob >= jobs.length) activeActualsJob = Math.max(0, jobs.length - 1);
   renderAll(); await dbDelete(id);
+}
+
+function renderVarianceReport() {
+  const el = document.getElementById('variance');
+  if (!el) return;
+  if (!jobs.length) { el.innerHTML = '<div class="empty-state">No jobs yet.</div>'; return; }
+
+  const cur = getCurrentMonth();
+
+  let html = `<div style="font-size:13px;color:#888;margin-bottom:1rem">
+    Variance = original forecast minus actual for costs (▼ under = good), actual minus forecast for billing (▼ over = good).
+    Only months with actuals entered are included.
+  </div>`;
+
+  // Per-job summary table
+  html += `<div style="font-size:12px;font-weight:600;color:#888;text-transform:uppercase;letter-spacing:.05em;margin-bottom:.5rem">Summary by job</div>
+  <div class="card" style="padding:0;overflow:hidden;overflow-x:auto;margin-bottom:1.5rem">
+  <table style="font-size:13px">
+  <thead>
+    <tr style="background:#f0f0f0">
+      <th rowspan="2" style="vertical-align:middle">Job</th>
+      <th colspan="3" style="text-align:center;border-left:1px solid #e0e0e0">Labour</th>
+      <th colspan="3" style="text-align:center;border-left:1px solid #e0e0e0">Materials</th>
+      <th colspan="3" style="text-align:center;border-left:1px solid #e0e0e0">Overhead</th>
+      <th colspan="3" style="text-align:center;border-left:1px solid #e0e0e0">Billing</th>
+      <th colspan="2" style="text-align:center;border-left:1px solid #e0e0e0">Margin</th>
+    </tr>
+    <tr style="background:#f8f8f8;font-size:11px">
+      <th style="border-left:1px solid #e0e0e0;color:#888;font-weight:500">Forecast</th><th style="color:#888;font-weight:500">Actual</th><th style="color:#888;font-weight:500">Variance</th>
+      <th style="border-left:1px solid #e0e0e0;color:#888;font-weight:500">Forecast</th><th style="color:#888;font-weight:500">Actual</th><th style="color:#888;font-weight:500">Variance</th>
+      <th style="border-left:1px solid #e0e0e0;color:#888;font-weight:500">Forecast</th><th style="color:#888;font-weight:500">Actual</th><th style="color:#888;font-weight:500">Variance</th>
+      <th style="border-left:1px solid #e0e0e0;color:#888;font-weight:500">Forecast</th><th style="color:#888;font-weight:500">Actual</th><th style="color:#888;font-weight:500">Variance</th>
+      <th style="border-left:1px solid #e0e0e0;color:#888;font-weight:500">Forecast %</th><th style="color:#888;font-weight:500">Actual %</th>
+    </tr>
+  </thead><tbody>`;
+
+  let grandFcL=0,grandActL=0,grandFcM=0,grandActM=0,grandFcO=0,grandActO=0,grandFcB=0,grandActB=0;
+
+  jobs.forEach(j => {
+    const months = getMonths(j.start, j.dur);
+    const elapsedMonths = months.filter(m => m < cur);
+    const n = elapsedMonths.length;
+    if (n === 0) return;
+
+    // Original forecast per month
+    const fcLpm = j.labour / j.dur;
+    const fcMpm = j.materials / j.dur;
+    const fcOpm = j.overhead / j.dur;
+    const fcBpm = j.contract * (1 - j.retention / 100) / j.dur;
+
+    // Total original forecast for elapsed months
+    const fcL = fcLpm * n, fcM = fcMpm * n, fcO = fcOpm * n, fcB = fcBpm * n;
+    const fcCost = fcL + fcM + fcO;
+
+    // Actual totals from entered actuals
+    let actL=0, actM=0, actO=0, actB=0, hasAny=false;
+    elapsedMonths.forEach(m => {
+      const a = j.actuals[m];
+      if (a) {
+        actL += a.labour    || 0;
+        actM += a.materials || 0;
+        actO += a.overhead  || 0;
+        actB += a.billing   || 0;
+        hasAny = true;
+      }
+    });
+
+    if (!hasAny) return;
+
+    grandFcL+=fcL; grandActL+=actL; grandFcM+=fcM; grandActM+=actM;
+    grandFcO+=fcO; grandActO+=actO; grandFcB+=fcB; grandActB+=actB;
+
+    const actCost = actL + actM + actO;
+    const fcMargin = fcB > 0 ? (fcB - fcCost) / fcB * 100 : 0;
+    const actMargin = actB > 0 ? (actB - actCost) / actB * 100 : 0;
+
+    function vCell(fc, act, isBilling, borderLeft=false) {
+      const diff = isBilling ? act - fc : fc - act;
+      const cls = diff >= 0 ? 'green' : 'red';
+      const arrow = diff >= 0 ? '▼' : '▲';
+      const bl = borderLeft ? 'border-left:1px solid #e0e0e0;' : '';
+      return `<td style="${bl}">${fmt(fc)}</td>
+        <td>${fmt(act)}</td>
+        <td class="${cls}" style="font-weight:500">${arrow} ${fmt(Math.abs(diff))}</td>`;
+    }
+
+    const marginDiff = actMargin - fcMargin;
+    const marginCls = marginDiff >= 0 ? 'green' : 'red';
+
+    html += `<tr>
+      <td><strong>${j.name}</strong>${j.client?`<div style="font-size:11px;color:#888">${j.client}</div>`:''}</td>
+      ${vCell(fcL, actL, false, true)}
+      ${vCell(fcM, actM, false, true)}
+      ${vCell(fcO, actO, false, true)}
+      ${vCell(fcB, actB, true, true)}
+      <td style="border-left:1px solid #e0e0e0;color:#888">${fmtPct(fcMargin)}</td>
+      <td class="${marginCls}" style="font-weight:500">${fmtPct(actMargin)} <span style="font-size:11px">(${marginDiff>=0?'+':''}${fmtPct(marginDiff)})</span></td>
+    </tr>`;
+  });
+
+  // Grand totals
+  const grandFcCost = grandFcL+grandFcM+grandFcO;
+  const grandActCost = grandActL+grandActM+grandActO;
+  const grandFcMargin = grandFcB > 0 ? (grandFcB - grandFcCost) / grandFcB * 100 : 0;
+  const grandActMargin = grandActB > 0 ? (grandActB - grandActCost) / grandActB * 100 : 0;
+  const grandMarginDiff = grandActMargin - grandFcMargin;
+
+  function gvCell(fc, act, isBilling, borderLeft=false) {
+    const diff = isBilling ? act - fc : fc - act;
+    const cls = diff >= 0 ? 'green' : 'red';
+    const arrow = diff >= 0 ? '▼' : '▲';
+    const bl = borderLeft ? 'border-left:1px solid #e0e0e0;' : '';
+    return `<td style="${bl}">${fmt(fc)}</td><td>${fmt(act)}</td><td class="${cls}">${arrow} ${fmt(Math.abs(diff))}</td>`;
+  }
+
+  html += `<tr style="background:#f0f0f0;font-weight:600;font-size:12px">
+    <td>All jobs</td>
+    ${gvCell(grandFcL,grandActL,false,true)}
+    ${gvCell(grandFcM,grandActM,false,true)}
+    ${gvCell(grandFcO,grandActO,false,true)}
+    ${gvCell(grandFcB,grandActB,true,true)}
+    <td style="border-left:1px solid #e0e0e0">${fmtPct(grandFcMargin)}</td>
+    <td class="${grandMarginDiff>=0?'green':'red'}">${fmtPct(grandActMargin)} (${grandMarginDiff>=0?'+':''}${fmtPct(grandMarginDiff)})</td>
+  </tr>`;
+
+  html += '</tbody></table></div>';
+
+  // Month-by-month variance across all jobs
+  html += `<div style="font-size:12px;font-weight:600;color:#888;text-transform:uppercase;letter-spacing:.05em;margin-bottom:.5rem">Month by month — all jobs combined</div>
+  <div class="card" style="padding:0;overflow:hidden;overflow-x:auto">
+  <table style="font-size:13px">
+  <thead>
+    <tr style="background:#f0f0f0">
+      <th rowspan="2" style="vertical-align:middle">Month</th>
+      <th colspan="3" style="text-align:center;border-left:1px solid #e0e0e0">Total costs</th>
+      <th colspan="3" style="text-align:center;border-left:1px solid #e0e0e0">Billing</th>
+      <th colspan="2" style="text-align:center;border-left:1px solid #e0e0e0">Cashflow</th>
+    </tr>
+    <tr style="background:#f8f8f8;font-size:11px">
+      <th style="border-left:1px solid #e0e0e0;color:#888;font-weight:500">Forecast</th><th style="color:#888;font-weight:500">Actual</th><th style="color:#888;font-weight:500">Variance</th>
+      <th style="border-left:1px solid #e0e0e0;color:#888;font-weight:500">Forecast</th><th style="color:#888;font-weight:500">Actual</th><th style="color:#888;font-weight:500">Variance</th>
+      <th style="border-left:1px solid #e0e0e0;color:#888;font-weight:500">Forecast</th><th style="color:#888;font-weight:500">Actual</th>
+    </tr>
+  </thead><tbody>`;
+
+  // Get all months with any actuals across all jobs
+  const allActualMonths = new Set();
+  jobs.forEach(j => { Object.keys(j.actuals).forEach(m => { if (m < cur && Object.keys(j.actuals[m]).length > 0) allActualMonths.add(m); }); });
+  const sortedMonths = [...allActualMonths].sort();
+
+  sortedMonths.forEach(m => {
+    let fcCostM=0, actCostM=0, fcBilM=0, actBilM=0;
+    jobs.forEach(j => {
+      const ms = getMonths(j.start, j.dur);
+      if (!ms.includes(m)) return;
+      const fcLpm = j.labour / j.dur, fcMpm = j.materials / j.dur, fcOpm = j.overhead / j.dur;
+      fcCostM += fcLpm + fcMpm + fcOpm;
+      fcBilM  += j.contract * (1 - j.retention / 100) / j.dur;
+      const a = j.actuals[m];
+      if (a) { actCostM += (a.labour||0)+(a.materials||0)+(a.overhead||0); actBilM += a.billing||0; }
+    });
+    const fcCashM = fcBilM - fcCostM;
+    const actCashM = actBilM - actCostM;
+    const costVar = fcCostM - actCostM;
+    const bilVar  = actBilM - fcBilM;
+    const costCls = costVar >= 0 ? 'green' : 'red';
+    const bilCls  = bilVar  >= 0 ? 'green' : 'red';
+
+    html += `<tr>
+      <td style="white-space:nowrap;font-weight:500">${monthLabel(m)}</td>
+      <td style="border-left:1px solid #e0e0e0;color:#888">${fmt(fcCostM)}</td>
+      <td>${fmt(actCostM)}</td>
+      <td class="${costCls}" style="font-weight:500">${costVar>=0?'▼':'▲'} ${fmt(Math.abs(costVar))}</td>
+      <td style="border-left:1px solid #e0e0e0;color:#888">${fmt(fcBilM)}</td>
+      <td>${fmt(actBilM)}</td>
+      <td class="${bilCls}" style="font-weight:500">${bilVar>=0?'▼':'▲'} ${fmt(Math.abs(bilVar))}</td>
+      <td style="border-left:1px solid #e0e0e0;color:#888">${fcCashM>=0?'+':''}${fmt(fcCashM)}</td>
+      <td class="${actCashM>=0?'green':'red'}" style="font-weight:500">${actCashM>=0?'+':''}${fmt(actCashM)}</td>
+    </tr>`;
+  });
+
+  if (sortedMonths.length === 0) html += '<tr><td colspan="9" style="text-align:center;color:#999;padding:2rem">No actuals entered yet — enter figures in the Enter actuals tab.</td></tr>';
+  html += '</tbody></table></div>';
+  el.innerHTML = html;
 }
 
 // Start
