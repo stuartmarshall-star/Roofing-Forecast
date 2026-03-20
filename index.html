@@ -168,6 +168,9 @@
       <input type="file" id="liab-csv-input" accept=".csv" style="display:none" onchange="handleLiabCsvImport(this)">
       <input type="file" id="csv-file-input" accept=".csv" style="display:none" onchange="handleCsvImport(this)">
       <input type="file" id="actuals-csv-input" accept=".csv" style="display:none" onchange="handleActualsCsvImport(this)">
+      <button id="btn-credits-template" class="btn tab-btn-credits" style="display:none" onclick="downloadCreditsTemplate()">⬇ Credits template</button>
+      <button id="btn-import-credits" class="btn tab-btn-credits" style="display:none" onclick="document.getElementById('credits-csv-input').click()">⬆ Import credits</button>
+      <input type="file" id="credits-csv-input" accept=".csv" style="display:none" onchange="handleCreditsCsvImport(this)">
       <button class="btn btn-primary" onclick="openAddJob()">+ Add job</button>
     </div>
   </div>
@@ -179,6 +182,7 @@
     <button class="tab" onclick="showTab('variance')">Variance report</button>
     <button class="tab" onclick="showTab('liabilities')">Liabilities</button>
     <button class="tab" onclick="showTab('retentions')">Retentions</button>
+    <button class="tab" onclick="showTab('credits')">Credits</button>
     <button class="tab" onclick="showTab('forecast')">Forecast</button>
   </div>
 
@@ -188,6 +192,7 @@
   <div id="variance" class="section"></div>
   <div id="liabilities" class="section"></div>
   <div id="retentions" class="section"></div>
+  <div id="credits" class="section"></div>
   <div id="forecast" class="section">
     <div style="display:flex;flex-wrap:wrap;align-items:flex-end;gap:16px;margin-bottom:1.25rem;background:#fff;border:1px solid #e8e8e8;border-radius:10px;padding:1rem 1.25rem;">
       <div>
@@ -268,6 +273,34 @@
     <div class="modal-footer">
       <button class="btn" onclick="closeImportModal()">Cancel</button>
       <button class="btn btn-primary" id="import-confirm-btn" onclick="confirmImport()">Import valid rows</button>
+    </div>
+  </div>
+</div>
+
+<!-- Add/Edit Credit Modal -->
+<div class="modal-backdrop" id="credit-modal-backdrop">
+  <div class="modal">
+    <div class="modal-title" id="credit-modal-title">Add credit</div>
+    <div class="form-grid">
+      <div><label>Description</label><input id="cr-name" placeholder="e.g. Retention — 14 Mill Lane"></div>
+      <div><label>Category</label>
+        <select id="cr-cat">
+          <option value="retention">Old retention</option>
+          <option value="variation">Variation order</option>
+          <option value="contra">Contra recovery</option>
+          <option value="other">Other</option>
+        </select>
+      </div>
+      <div><label>Amount (£)</label><input type="number" id="cr-amount" placeholder="0"></div>
+    </div>
+    <div class="form-grid">
+      <div><label>Expected receipt month</label><input type="month" id="cr-month"></div>
+      <div><label>Client / Job ref</label><input id="cr-ref" placeholder="Optional reference"></div>
+      <div><label>Notes</label><input id="cr-notes" placeholder="Optional notes"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn" onclick="closeCreditModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="saveCredit()">Save credit</button>
     </div>
   </div>
 </div>
@@ -366,6 +399,22 @@ const CORRECT_PIN = '1976';
   alter table liabilities enable row level security;
   create policy "Public access" on liabilities for all using (true) with check (true);
 
+  -- Credits table (one-off income items — old retentions, variations, etc.):
+  create table if not exists credits (
+    id uuid primary key default gen_random_uuid(),
+    name text not null,
+    category text default 'other',
+    amount numeric default 0,
+    expected_month text,
+    ref text,
+    notes text,
+    received boolean default false,
+    received_month text,
+    created_at timestamptz default now()
+  );
+  alter table credits enable row level security;
+  create policy "Public access" on credits for all using (true) with check (true);
+
   -- Settings table (for opening balance and future app settings):
   create table if not exists settings (
     id uuid primary key default gen_random_uuid(),
@@ -435,6 +484,8 @@ const SB_KEY = 'sb_publishable_IklQe45ab06L_eIrjeUeQg_wifiK9FA';
 
 let jobs = [];
 let liabilities = [];
+let credits = [];
+let editCreditIdx = null;
 let editIdx = null;
 let editLiabIdx = null;
 let activeActualsJob = 0;
@@ -510,13 +561,15 @@ function setSaving(msg) { document.getElementById('saving-indicator').textConten
 async function loadJobs() {
   setStatus('connecting', 'Connecting to your database...');
   try {
-    const [jobData, liabData, settingsData] = await Promise.all([
+    const [jobData, liabData, settingsData, creditData] = await Promise.all([
       sbFetch('jobs?select=*&order=created_at.asc'),
       sbFetch('liabilities?select=*&order=created_at.asc').catch(() => []),
-      sbFetch('settings?select=*').catch(() => [])
+      sbFetch('settings?select=*').catch(() => []),
+      sbFetch('credits?select=*&order=created_at.asc').catch(() => [])
     ]);
     jobs = jobData.map(dbToJob);
     liabilities = liabData.map(dbToLiab);
+    credits = creditData.map(dbToCredit);
 
     // Load balance history
     const bhSetting = settingsData.find(s => s.key === 'balance_history');
@@ -696,6 +749,44 @@ async function dbSaveLiab(liab) {
 async function dbDeleteLiab(id) {
   if (!isConnected || !id) return;
   await sbFetch('liabilities?id=eq.' + id, { method: 'DELETE' });
+}
+
+function dbToCredit(row) {
+  return {
+    id: row.id, name: row.name, category: row.category || 'other',
+    amount: parseFloat(row.amount) || 0,
+    expectedMonth: row.expected_month || '',
+    ref: row.ref || '', notes: row.notes || '',
+    received: row.received || false,
+    receivedMonth: row.received_month || ''
+  };
+}
+
+function creditToDb(c) {
+  return {
+    name: c.name, category: c.category, amount: c.amount,
+    expected_month: c.expectedMonth, ref: c.ref, notes: c.notes,
+    received: c.received, received_month: c.receivedMonth || null
+  };
+}
+
+async function dbSaveCredit(credit) {
+  if (!isConnected) return;
+  setSaving('Saving...');
+  try {
+    if (credit.id) {
+      await sbFetch('credits?id=eq.' + credit.id, { method: 'PATCH', body: JSON.stringify(creditToDb(credit)) });
+    } else {
+      const res = await sbFetch('credits', { method: 'POST', body: JSON.stringify(creditToDb(credit)) });
+      if (res && res[0]) credit.id = res[0].id;
+    }
+    setSaving('Saved ✓'); setTimeout(() => setSaving(''), 2000);
+  } catch(e) { setSaving('Save failed: ' + e.message); }
+}
+
+async function dbDeleteCredit(id) {
+  if (!isConnected || !id) return;
+  await sbFetch('credits?id=eq.' + id, { method: 'DELETE' });
 }
 
 function setupRealtime() {
@@ -1595,6 +1686,121 @@ async function confirmLiabImport() {
   renderAll();
 }
 
+// ── Credits CSV import / export ──────────────────────────────────────────────
+const CREDITS_CSV_HEADERS = ['name','category','amount','expected_month','ref','notes'];
+const CREDITS_CATEGORIES  = ['retention','variation','contra','other'];
+
+function downloadCreditsTemplate() {
+  const rows = [
+    CREDITS_CSV_HEADERS.join(','),
+    'Retention — 14 Mill Lane,retention,6250,Apr-26,RF-2024-003,First moiety on completion',
+    'Retention — Oak Street,retention,3125,Jun-26,RF-2024-007,Second moiety after defects',
+    'VO#3 extra works,variation,4800,Mar-26,RF-2025-001,Agreed variation order',
+    'Scaffold contra recovery,contra,1200,May-26,,Recovery from subcontractor'
+  ];
+  triggerCsvDownload(rows.join('\n'), 'credits-import-template.csv');
+}
+
+let creditsImportRows = [];
+
+function handleCreditsCsvImport(input) {
+  const file = input.files[0]; if (!file) return;
+  const reader = new FileReader();
+  reader.onload = e => {
+    const text = e.target.result;
+    const lines = text.split(/\r?\n/).filter(l => l.trim());
+    if (lines.length < 2) { alert('CSV appears empty.'); return; }
+    const headers = lines[0].split(',').map(h => h.trim().toLowerCase().replace(/\s+/g,'_'));
+    const rows = [];
+    for (let i = 1; i < lines.length; i++) {
+      const vals = lines[i].split(',').map(v => v.trim());
+      const row = {}; headers.forEach((h, idx) => { row[h] = vals[idx] || ''; });
+      const errors = [];
+      const name          = row.name || '';
+      const catRaw        = (row.category || '').toLowerCase();
+      const category      = CREDITS_CATEGORIES.includes(catRaw) ? catRaw : 'other';
+      const amount        = parseFloat(row.amount) || 0;
+      const expectedMonth = parseStartMonth(row.expected_month || '');
+      const ref           = row.ref || '';
+      const notes         = row.notes || '';
+
+      if (!name)    errors.push('Missing name');
+      if (amount <= 0) errors.push('Amount must be > 0');
+      if (row.expected_month && !expectedMonth) errors.push(`Invalid month "${row.expected_month}" — use Dec-25`);
+      // Skip duplicates by name
+      if (credits.some(c => c.name.toLowerCase() === name.toLowerCase())) errors.push(`"${name}" already exists — will be skipped`);
+
+      rows.push({ name, category, amount, expectedMonth, ref, notes, errors, valid: errors.length === 0 });
+    }
+    creditsImportRows = rows;
+    showCreditsImportPreview(rows);
+  };
+  reader.readAsText(file);
+  input.value = '';
+}
+
+function showCreditsImportPreview(rows) {
+  const validCount   = rows.filter(r => r.valid).length;
+  const invalidCount = rows.length - validCount;
+  let html = `<div style="margin-bottom:1rem;font-size:13px">
+    <span style="color:#16a34a;font-weight:500">${validCount} row${validCount!==1?'s':''} ready to import</span>
+    ${invalidCount > 0 ? `&nbsp;|&nbsp; <span style="color:#dc2626">${invalidCount} with errors (will be skipped)</span>` : ''}
+  </div>
+  <div style="overflow-x:auto;max-height:400px;overflow-y:auto">
+  <table style="font-size:12px;width:100%;border-collapse:collapse">
+  <thead style="position:sticky;top:0;background:#f0f0f0">
+    <tr>
+      <th style="padding:6px 8px;border-bottom:1px solid #ddd"></th>
+      <th style="padding:6px 8px;border-bottom:1px solid #ddd">Description</th>
+      <th style="padding:6px 8px;border-bottom:1px solid #ddd">Category</th>
+      <th style="padding:6px 8px;border-bottom:1px solid #ddd">Amount</th>
+      <th style="padding:6px 8px;border-bottom:1px solid #ddd">Expected</th>
+      <th style="padding:6px 8px;border-bottom:1px solid #ddd">Ref</th>
+      <th style="padding:6px 8px;border-bottom:1px solid #ddd">Notes</th>
+      <th style="padding:6px 8px;border-bottom:1px solid #ddd">Issues</th>
+    </tr>
+  </thead><tbody>`;
+  rows.forEach(r => {
+    const bg   = r.valid ? '' : 'background:#fef2f2';
+    const icon = r.valid ? '<span style="color:#16a34a;font-weight:600">✓</span>' : '<span style="color:#dc2626;font-weight:600">✗</span>';
+    html += `<tr style="${bg};border-bottom:1px solid #f0f0f0">
+      <td style="padding:5px 8px">${icon}</td>
+      <td style="padding:5px 8px;font-weight:500">${r.name||'—'}</td>
+      <td style="padding:5px 8px">${CREDIT_CAT_LABELS[r.category]||r.category}</td>
+      <td style="padding:5px 8px">£${(r.amount||0).toLocaleString('en-GB')}</td>
+      <td style="padding:5px 8px">${r.expectedMonth ? monthLabel(r.expectedMonth) : '—'}</td>
+      <td style="padding:5px 8px;color:#888">${r.ref||'—'}</td>
+      <td style="padding:5px 8px;color:#888">${r.notes||'—'}</td>
+      <td style="padding:5px 8px;color:#dc2626;font-size:11px">${r.errors.join(', ')}</td>
+    </tr>`;
+  });
+  html += '</tbody></table></div>';
+  document.getElementById('import-preview-content').innerHTML = html;
+  document.getElementById('import-confirm-btn').disabled = validCount === 0;
+  document.getElementById('import-confirm-btn').onclick = confirmCreditsImport;
+  document.getElementById('import-modal-backdrop').classList.add('open');
+}
+
+async function confirmCreditsImport() {
+  const validRows = creditsImportRows.filter(r => r.valid);
+  if (!validRows.length) return;
+  setSaving('Importing...');
+  closeImportModal();
+  for (const r of validRows) {
+    const credit = {
+      name: r.name, category: r.category, amount: r.amount,
+      expectedMonth: r.expectedMonth || '', ref: r.ref, notes: r.notes,
+      received: false, receivedMonth: ''
+    };
+    credits.push(credit);
+    await dbSaveCredit(credit);
+  }
+  setSaving(`Imported ${validRows.length} credit${validRows.length!==1?'s':''} ✓`);
+  setTimeout(() => setSaving(''), 3000);
+  creditsImportRows = [];
+  renderAll();
+}
+
 // ── Actuals CSV import ────────────────────────────────────────────────────────
 // Format: job_ref, month (e.g. Dec-25), labour, materials, overhead, billing_received
 const ACTUALS_CSV_HEADERS = ['job_ref','month','labour','materials','overhead','billing_received'];
@@ -2081,9 +2287,10 @@ function renderForecastSection() {
     const tC = tL + tM + tO;
     const tLiab = getTotalLiabilitiesForMonth(m);
     const tRetReceived = getRetentionReceivedForMonth(m);
+    const tCreditsReceived = getCreditReceivedForMonth(m);
     const tNetBilling = tGrossBilling - tRetHeld;
-    const cash = tNetBilling + tRetReceived - tC - tLiab;
-    return {m, tL, tM, tO, tC, tGrossBilling, tRetHeld, tNetBilling, tLiab, tRetReceived, cash};
+    const cash = tNetBilling + tRetReceived + tCreditsReceived - tC - tLiab;
+    return {m, tL, tM, tO, tC, tGrossBilling, tRetHeld, tNetBilling, tLiab, tRetReceived, tCreditsReceived, cash};
   });
 
   // Build cumulative — use actual balance history where recorded, forecast otherwise
@@ -2159,11 +2366,11 @@ function renderForecastSection() {
     }
   });
 
-  let totL=0,totM=0,totO=0,totGross=0,totRetHeld=0,totLiab=0,totRetRec=0;
-  rows.forEach(r=>{totL+=r.tL;totM+=r.tM;totO+=r.tO;totGross+=r.tGrossBilling;totRetHeld+=r.tRetHeld;totLiab+=r.tLiab;totRetRec+=r.tRetReceived;});
+  let totL=0,totM=0,totO=0,totGross=0,totRetHeld=0,totLiab=0,totRetRec=0,totCredRec=0;
+  rows.forEach(r=>{totL+=r.tL;totM+=r.tM;totO+=r.tO;totGross+=r.tGrossBilling;totRetHeld+=r.tRetHeld;totLiab+=r.tLiab;totRetRec+=r.tRetReceived;totCredRec+=r.tCreditsReceived;});
   const totC=totL+totM+totO;
   const totNet=totGross-totRetHeld;
-  const totCash=totNet+totRetRec-totC-totLiab;
+  const totCash=totNet+totRetRec+totCredRec-totC-totLiab;
 
   let tbl = `<div style="font-size:11px;color:#888;margin-bottom:.5rem">
     Total costs = L (labour, this month) + M (materials, prev month) + O (overhead) + Liab (liabilities).
@@ -2176,6 +2383,7 @@ function renderForecastSection() {
     <th title="Labour this month + materials from prev month + overhead + liabilities">Total costs</th>
     <th>Net billing</th>
     <th>Ret. received</th>
+    <th>Credits</th>
     <th>Monthly cash</th>
     <th style="border-left:2px solid #e8e8e8">Closing balance</th>
   </tr></thead><tbody>`;
@@ -2238,13 +2446,15 @@ function renderForecastSection() {
         <div style="font-size:11px;color:#888">Gross:${fmt(r.tGrossBilling)}${r.tRetHeld>0?' Ret:-'+fmt(r.tRetHeld):''}</div>
       </td>
       <td>${retRecCell}</td>
+      <td>${r.tCreditsReceived > 0 ? `<span style="color:#6d28d9;font-weight:600">+${fmt(r.tCreditsReceived)}</span>` : '<span style="color:#ccc">—</span>'}</td>
       <td class="${r.cash>=0?'green':'red'}"><strong>${r.cash>=0?'+':''}${fmt(r.cash)}</strong></td>
       <td style="${cumStyle}" class="${r.cumIsActual?'':''+cumClass}">${r.cumCash>=0?'+':''}${fmt(r.cumCash)}${r.cumIsActual?'<div style="font-size:10px;font-weight:500;color:#15803d">actual</div>':''}</td>
     </tr>`;
 
     // Detail sub-row (hidden by default)
+    const creditsThisMonth = credits.filter(c => c.received && c.receivedMonth === r.m);
     let detailHtml = `<tr id="${detailId}" style="display:none">
-      <td colspan="6" style="padding:0;border-bottom:1px solid #e8e8e8">
+      <td colspan="7" style="padding:0;border-bottom:1px solid #e8e8e8">
         <div style="background:#f8f8f8;padding:10px 14px 10px 42px">
           <table style="width:100%;font-size:12px;border-collapse:collapse">
             <thead><tr style="color:#888">
@@ -2284,6 +2494,16 @@ function renderForecastSection() {
       detailHtml += `</td></tr>`;
     }
 
+    if (creditsThisMonth.length) {
+      detailHtml += `<tr style="border-top:1px solid #ddd;background:#faf5ff">
+        <td style="padding:4px 8px;font-weight:500;color:#6d28d9" colspan="3">Credits received this month</td>
+        <td colspan="5" style="padding:4px 8px">`;
+      creditsThisMonth.forEach(c => {
+        detailHtml += `<span style="color:#6d28d9;margin-right:12px">${c.name}: +${fmt(c.amount)}</span>`;
+      });
+      detailHtml += `</td></tr>`;
+    }
+
     detailHtml += `</tbody></table></div></td></tr>`;
     tbl += detailHtml;
   });
@@ -2293,6 +2513,7 @@ function renderForecastSection() {
     <td>${fmt(totC+totLiab)}<div style="font-size:11px;font-weight:400;color:#666">L:${fmt(totL)} M:${fmt(totM)} O:${fmt(totO)}${totLiab>0?' Liab:'+fmt(totLiab):''}</div></td>
     <td>${fmt(totNet)}<div style="font-size:11px;font-weight:400;color:#666">Gross:${fmt(totGross)} Ret:-${fmt(totRetHeld)}</div></td>
     <td style="color:#0f766e">${totRetRec>0?'+'+fmt(totRetRec):'—'}</td>
+    <td style="color:#6d28d9">${totCredRec>0?'+'+fmt(totCredRec):'—'}</td>
     <td class="${totCash>=0?'green':'red'}">${totCash>=0?'+':''}${fmt(totCash)}</td>
     <td style="border-left:2px solid #e8e8e8"></td>
   </tr>`;
@@ -2503,18 +2724,183 @@ function renderRetentionsSection() {
   }
 }
 
+// ── Credits ───────────────────────────────────────────────────────────────────
+const CREDIT_CAT_LABELS = { retention:'Old retention', variation:'Variation order', contra:'Contra recovery', other:'Other' };
+const CREDIT_CAT_COLOURS = { retention:'#fef9c3', variation:'#dbeafe', contra:'#ede9fe', other:'#f3f4f6' };
+const CREDIT_CAT_TEXT = { retention:'#a16207', variation:'#1d4ed8', contra:'#6d28d9', other:'#4b5563' };
+
+function getCreditReceivedForMonth(m) {
+  return credits.filter(c => c.received && c.receivedMonth === m).reduce((s, c) => s + c.amount, 0);
+}
+
+function renderCreditsSection() {
+  const el = document.getElementById('credits');
+  if (!el) return;
+
+  const cur = getCurrentMonth();
+  const totalPending  = credits.filter(c => !c.received).reduce((s,c) => s + c.amount, 0);
+  const totalReceived = credits.filter(c =>  c.received).reduce((s,c) => s + c.amount, 0);
+  const overdue = credits.filter(c => !c.received && c.expectedMonth && c.expectedMonth < cur);
+
+  let html = `
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem">
+      <div style="font-size:15px;font-weight:600">Credits</div>
+      <button class="btn btn-primary" onclick="openAddCredit()">+ Add credit</button>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:1.5rem">
+      <div class="metric"><div class="metric-label">Pending credits</div><div class="metric-value" style="color:#d97706">${fmt(totalPending)}</div><div style="font-size:11px;color:#888;margin-top:2px">${credits.filter(c=>!c.received).length} item${credits.filter(c=>!c.received).length!==1?'s':''}</div></div>
+      <div class="metric"><div class="metric-label">Received</div><div class="metric-value green">${fmt(totalReceived)}</div><div style="font-size:11px;color:#888;margin-top:2px">${credits.filter(c=>c.received).length} item${credits.filter(c=>c.received).length!==1?'s':''}</div></div>
+      <div class="metric"><div class="metric-label">Overdue</div><div class="metric-value ${overdue.length>0?'red':''}">${overdue.length}</div><div style="font-size:11px;color:#888;margin-top:2px">Expected before ${monthLabel(cur)}</div></div>
+    </div>`;
+
+  if (!credits.length) {
+    html += '<div class="empty-state">No credits yet — click "+ Add credit" to add old retentions or one-off income items.</div>';
+    el.innerHTML = html; return;
+  }
+
+  // Sort: overdue first, then pending by expected month, then received
+  const sorted = [...credits].sort((a,b) => {
+    if (a.received !== b.received) return a.received ? 1 : -1;
+    return (a.expectedMonth||'').localeCompare(b.expectedMonth||'');
+  });
+
+  html += `<div class="card" style="padding:0;overflow:hidden">
+  <table style="font-size:13px">
+  <thead><tr>
+    <th>Description</th><th>Category</th><th>Ref</th>
+    <th>Expected</th><th>Amount</th><th>Status</th><th>Action</th><th></th>
+  </tr></thead><tbody>`;
+
+  sorted.forEach((c, i) => {
+    const idx = credits.indexOf(c);
+    const isOverdue = !c.received && c.expectedMonth && c.expectedMonth < cur;
+    const bg = c.received ? 'background:#f0fdf4' : isOverdue ? 'background:#fef2f2' : '';
+    const catBadge = `<span style="background:${CREDIT_CAT_COLOURS[c.category]};color:${CREDIT_CAT_TEXT[c.category]};padding:2px 8px;border-radius:10px;font-size:11px;font-weight:500">${CREDIT_CAT_LABELS[c.category]||c.category}</span>`;
+
+    const statusCell = c.received
+      ? `<span class="badge badge-actual">Received ${monthLabel(c.receivedMonth)}</span>`
+      : isOverdue
+        ? `<span style="background:#fee2e2;color:#dc2626;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:500">Overdue</span>`
+        : `<span class="badge badge-forecast">Pending</span>`;
+
+    const btnId = `cr-btn-${idx}`;
+    const pickId = `cr-pick-${idx}`;
+    let actionCell = '';
+    if (c.received) {
+      actionCell = `<button onclick="toggleCreditReceived(${idx},false)"
+        style="padding:3px 10px;font-size:11px;border:1px solid #bbf7d0;border-radius:6px;background:#dcfce7;color:#15803d;cursor:pointer;font-family:inherit">✓ Received — undo</button>`;
+    } else {
+      actionCell = `
+        <div id="${btnId}">
+          <button onclick="document.getElementById('${btnId}').style.display='none';document.getElementById('${pickId}').style.display='flex'"
+            style="padding:4px 12px;font-size:12px;border:1px solid ${isOverdue?'#fca5a5':'#fde68a'};border-radius:6px;background:${isOverdue?'#fef2f2':'#fef9c3'};color:${isOverdue?'#dc2626':'#a16207'};cursor:pointer;font-family:inherit">
+            Mark received
+          </button>
+        </div>
+        <div id="${pickId}" style="display:none;align-items:center;gap:6px;flex-wrap:wrap">
+          <label style="font-size:12px;color:#555;margin:0">Month received:</label>
+          <input type="month" id="cr-month-input-${idx}"
+            style="font-size:12px;padding:3px 6px;border:1px solid #ddd;border-radius:6px"
+            value="${cur}">
+          <button onclick="toggleCreditReceived(${idx},true,document.getElementById('cr-month-input-${idx}').value)"
+            style="padding:3px 10px;font-size:12px;border:1px solid #bbf7d0;border-radius:6px;background:#dcfce7;color:#15803d;cursor:pointer;font-family:inherit">Confirm</button>
+          <button onclick="document.getElementById('${pickId}').style.display='none';document.getElementById('${btnId}').style.display='block'"
+            style="padding:3px 8px;font-size:12px;border:1px solid #ddd;border-radius:6px;background:#f5f5f5;color:#888;cursor:pointer;font-family:inherit">Cancel</button>
+        </div>`;
+    }
+
+    html += `<tr style="${bg};border-bottom:1px solid #f0f0f0">
+      <td><strong>${c.name}</strong>${c.notes?`<div style="font-size:11px;color:#888">${c.notes}</div>`:''}  </td>
+      <td>${catBadge}</td>
+      <td style="font-size:12px;color:#888">${c.ref||'—'}</td>
+      <td style="white-space:nowrap">${c.expectedMonth ? monthLabel(c.expectedMonth) : '—'}</td>
+      <td class="${c.received?'green':''}" style="font-weight:500">${c.received?'+':''}${fmt(c.amount)}</td>
+      <td>${statusCell}</td>
+      <td>${actionCell}</td>
+      <td style="white-space:nowrap">
+        <button class="btn btn-sm" onclick="openEditCredit(${idx})" style="margin-right:4px">Edit</button>
+        <button class="btn btn-sm btn-danger" onclick="deleteCredit(${idx})">Del</button>
+      </td>
+    </tr>`;
+  });
+
+  html += '</tbody></table></div>';
+  el.innerHTML = html;
+}
+
+async function toggleCreditReceived(idx, received, month) {
+  const c = credits[idx];
+  c.received = received;
+  c.receivedMonth = received ? (month || getCurrentMonth()) : '';
+  renderAll();
+  await dbSaveCredit(c);
+  renderAll();
+}
+
+function openAddCredit() {
+  editCreditIdx = null;
+  document.getElementById('credit-modal-title').textContent = 'Add credit';
+  ['cr-name','cr-ref','cr-notes','cr-amount'].forEach(id => document.getElementById(id).value = '');
+  document.getElementById('cr-cat').value = 'retention';
+  const now = new Date();
+  document.getElementById('cr-month').value = now.getFullYear() + '-' + String(now.getMonth()+1).padStart(2,'0');
+  document.getElementById('credit-modal-backdrop').classList.add('open');
+}
+
+function openEditCredit(idx) {
+  editCreditIdx = idx;
+  const c = credits[idx];
+  document.getElementById('credit-modal-title').textContent = 'Edit credit';
+  document.getElementById('cr-name').value = c.name;
+  document.getElementById('cr-cat').value = c.category;
+  document.getElementById('cr-amount').value = c.amount;
+  document.getElementById('cr-month').value = c.expectedMonth || '';
+  document.getElementById('cr-ref').value = c.ref || '';
+  document.getElementById('cr-notes').value = c.notes || '';
+  document.getElementById('credit-modal-backdrop').classList.add('open');
+}
+
+function closeCreditModal() { document.getElementById('credit-modal-backdrop').classList.remove('open'); }
+
+async function saveCredit() {
+  const name = document.getElementById('cr-name').value.trim();
+  if (!name) { alert('Please enter a description.'); return; }
+  const credit = {
+    id: editCreditIdx !== null ? credits[editCreditIdx].id : undefined,
+    name, category: document.getElementById('cr-cat').value,
+    amount: parseFloat(document.getElementById('cr-amount').value) || 0,
+    expectedMonth: document.getElementById('cr-month').value,
+    ref: document.getElementById('cr-ref').value.trim(),
+    notes: document.getElementById('cr-notes').value.trim(),
+    received: editCreditIdx !== null ? credits[editCreditIdx].received : false,
+    receivedMonth: editCreditIdx !== null ? credits[editCreditIdx].receivedMonth : ''
+  };
+  if (editCreditIdx !== null) credits[editCreditIdx] = credit; else credits.push(credit);
+  closeCreditModal(); renderAll();
+  await dbSaveCredit(credit);
+  renderAll();
+}
+
+async function deleteCredit(idx) {
+  if (!confirm('Delete this credit?')) return;
+  const id = credits[idx].id;
+  credits.splice(idx, 1);
+  renderAll();
+  await dbDeleteCredit(id);
+}
+
 function renderAll() {
-  renderSummary(); renderJobsTable(); renderActualsSection(); renderVarianceReport(); renderLiabilitiesSection(); renderRetentionsSection(); renderForecastSection();
+  renderSummary(); renderJobsTable(); renderActualsSection(); renderVarianceReport();
+  renderLiabilitiesSection(); renderRetentionsSection(); renderCreditsSection(); renderForecastSection();
 }
 
 function showTab(id) {
-  document.querySelectorAll('.tab').forEach((t, i) => t.classList.toggle('active', ['summary','jobs','actuals','variance','liabilities','retentions','forecast'][i] === id));
+  document.querySelectorAll('.tab').forEach((t, i) => t.classList.toggle('active', ['summary','jobs','actuals','variance','liabilities','retentions','credits','forecast'][i] === id));
   document.querySelectorAll('.section').forEach(s => s.classList.toggle('active', s.id === id));
-  // Show contextual CSV buttons
   document.querySelectorAll('.tab-btn-jobs').forEach(b => b.style.display = id === 'jobs' ? '' : 'none');
   document.querySelectorAll('.tab-btn-actuals').forEach(b => b.style.display = id === 'actuals' ? '' : 'none');
   document.querySelectorAll('.tab-btn-liabilities').forEach(b => b.style.display = id === 'liabilities' ? '' : 'none');
-  // Re-check closing balance prompt when visiting forecast tab
+  document.querySelectorAll('.tab-btn-credits').forEach(b => b.style.display = id === 'credits' ? '' : 'none');
   if (id === 'forecast') checkMonthlyBalancePrompt();
 }
 
