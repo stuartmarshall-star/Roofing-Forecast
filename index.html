@@ -197,7 +197,7 @@
     <div style="display:flex;flex-wrap:wrap;align-items:flex-end;gap:16px;margin-bottom:1.25rem;background:#fff;border:1px solid #e8e8e8;border-radius:10px;padding:1rem 1.25rem;">
       <div>
         <label style="margin-bottom:4px">Start from</label>
-        <input type="month" id="fc-start" style="width:160px" onchange="renderForecastSection()">
+        <input type="text" id="fc-start" style="width:100px" placeholder="MM/YY" onchange="renderForecastSection()">
       </div>
       <div>
         <label style="margin-bottom:4px">Show</label>
@@ -220,7 +220,7 @@
       <div style="font-size:13px;font-weight:500;color:#1a1a1a;white-space:nowrap">Closing balance</div>
       <div style="display:flex;align-items:center;gap:6px">
         <span style="font-size:13px;color:#555">£</span>
-        <input type="number" id="fc-opening-balance" style="width:130px;font-size:13px;padding:5px 8px" placeholder="Enter balance" oninput="renderForecastSection()">
+        <input type="number" id="fc-opening-balance" style="width:130px;font-size:13px;padding:5px 8px" placeholder="Enter balance">
         <button class="btn btn-primary btn-sm" onclick="saveOpeningBalance()">Save</button>
       </div>
       <div style="font-size:12px;color:#888" id="ob-month-label"></div>
@@ -248,7 +248,7 @@
       <div><label>Monthly amount (£)</label><input type="number" id="l-amount" placeholder="0"></div>
     </div>
     <div class="form-grid">
-      <div><label>Start month</label><input type="month" id="l-start"></div>
+      <div><label>Start month</label><input type="text" id="l-start" placeholder="MM/YY" style="width:100px"></div>
       <div><label>Duration (months)</label><input type="number" id="l-dur" min="1" placeholder="e.g. 48"></div>
       <div><label>Ongoing (no end date)</label>
         <div style="display:flex;align-items:center;gap:8px;margin-top:8px">
@@ -294,7 +294,7 @@
       <div><label>Amount (£)</label><input type="number" id="cr-amount" placeholder="0"></div>
     </div>
     <div class="form-grid">
-      <div><label>Expected receipt month</label><input type="month" id="cr-month"></div>
+      <div><label>Expected receipt month</label><input type="text" id="cr-month" placeholder="MM/YY" style="width:100px"></div>
       <div><label>Client / Job ref</label><input id="cr-ref" placeholder="Optional reference"></div>
       <div><label>Notes</label><input id="cr-notes" placeholder="Optional notes"></div>
     </div>
@@ -316,7 +316,7 @@
     </div>
     <div class="form-grid">
       <div><label>Status</label><select id="f-status"><option value="active">Active</option><option value="future">Future</option><option value="complete">Complete</option></select></div>
-      <div><label>Start month</label><input type="month" id="f-start"></div>
+      <div><label>Start month</label><input type="text" id="f-start" placeholder="MM/YY" style="width:100px"></div>
       <div><label>Duration (months)</label><input type="number" id="f-dur" min="1" max="24" value="3"></div>
     </div>
     <div class="form-grid">
@@ -833,6 +833,19 @@ async function dbDelete(id) {
   await sbFetch('jobs?id=eq.' + id, { method: 'DELETE' });
 }
 
+// ── Date input helpers ────────────────────────────────────────────────────────
+function parseMonthInput(val) {
+  if (!val) return '';
+  val = val.trim();
+  if (/^\d{4}-\d{2}$/.test(val)) return val;
+  const dmy = val.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2}|\d{4})$/);
+  if (dmy) { const y = dmy[3].length === 2 ? '20' + dmy[3] : dmy[3]; return y + '-' + String(dmy[2]).padStart(2, '0'); }
+  const my = val.match(/^(\d{1,2})\/(\d{2}|\d{4})$/);
+  if (my) { const y = my[2].length === 2 ? '20' + my[2] : my[2]; return y + '-' + String(my[1]).padStart(2, '0'); }
+  return parseStartMonth(val) || '';
+}
+function fmtMonthInput(ym) { if (!ym) return ''; const [y, m] = ym.split('-'); return m + '/' + y.slice(2); }
+
 // ── Forecast engine ──────────────────────────────────────────────────────────
 function getMonths(start, dur) {
   const months = [], [y, m] = start.split('-').map(Number);
@@ -1111,7 +1124,7 @@ function openAddLiab() {
   document.getElementById('l-dur').disabled = false;
   document.getElementById('l-cat').value = 'loan';
   const now = new Date();
-  document.getElementById('l-start').value = now.getFullYear() + '-' + String(now.getMonth()+1).padStart(2,'0');
+  document.getElementById('l-start').value = fmtMonthInput(now.getFullYear() + '-' + String(now.getMonth()+1).padStart(2,'0'));
   document.getElementById('liab-modal-backdrop').classList.add('open');
 }
 
@@ -1122,7 +1135,7 @@ function editLiability(idx) {
   document.getElementById('l-name').value = l.name;
   document.getElementById('l-amount').value = l.amount;
   document.getElementById('l-cat').value = l.category;
-  document.getElementById('l-start').value = l.start;
+  document.getElementById('l-start').value = fmtMonthInput(l.start);
   document.getElementById('l-dur').value = l.dur || '';
   document.getElementById('l-ongoing').checked = l.ongoing;
   document.getElementById('l-dur').disabled = l.ongoing;
@@ -1148,7 +1161,7 @@ async function saveLiability() {
     id: editLiabIdx !== null ? liabilities[editLiabIdx].id : undefined,
     name, category: document.getElementById('l-cat').value,
     amount: parseFloat(document.getElementById('l-amount').value) || 0,
-    start: document.getElementById('l-start').value,
+    start: parseMonthInput(document.getElementById('l-start').value),
     dur: ongoing ? null : dur, ongoing,
     notes: document.getElementById('l-notes').value.trim()
   };
@@ -1795,8 +1808,8 @@ async function confirmCreditsImport() {
 }
 
 // ── Actuals CSV import ────────────────────────────────────────────────────────
-// Format: job_ref, month (e.g. Dec-25), labour, materials, overhead, billing_received
-const ACTUALS_CSV_HEADERS = ['job_ref','month','labour','materials','overhead','billing_received'];
+// Format: job_ref, month (e.g. Dec-25), billing_received, labour, overhead, materials
+const ACTUALS_CSV_HEADERS = ['job_ref','month','billing_received','labour','overhead','materials'];
 
 function downloadActualsTemplate() {
   triggerCsvDownload(ACTUALS_CSV_HEADERS.join(','), 'actuals-import-template.csv');
@@ -1856,10 +1869,10 @@ function showActualsImportPreview(rows) {
       <th style="padding:6px 8px;border-bottom:1px solid #ddd"></th>
       <th style="padding:6px 8px;border-bottom:1px solid #ddd">Job ref</th>
       <th style="padding:6px 8px;border-bottom:1px solid #ddd">Month</th>
-      <th style="padding:6px 8px;border-bottom:1px solid #ddd">Labour</th>
-      <th style="padding:6px 8px;border-bottom:1px solid #ddd">Materials</th>
-      <th style="padding:6px 8px;border-bottom:1px solid #ddd">Overhead</th>
       <th style="padding:6px 8px;border-bottom:1px solid #ddd">Billing received</th>
+      <th style="padding:6px 8px;border-bottom:1px solid #ddd">Labour</th>
+      <th style="padding:6px 8px;border-bottom:1px solid #ddd">Overhead</th>
+      <th style="padding:6px 8px;border-bottom:1px solid #ddd">Materials</th>
       <th style="padding:6px 8px;border-bottom:1px solid #ddd">Issues</th>
     </tr>
   </thead><tbody>`;
@@ -1870,10 +1883,10 @@ function showActualsImportPreview(rows) {
       <td style="padding:5px 8px">${icon}</td>
       <td style="padding:5px 8px;font-weight:500">${r.jobRef||'—'}</td>
       <td style="padding:5px 8px">${r.month ? monthLabel(r.month) : '—'}</td>
-      <td style="padding:5px 8px">£${(r.labour||0).toLocaleString('en-GB')}</td>
-      <td style="padding:5px 8px">£${(r.materials||0).toLocaleString('en-GB')}</td>
-      <td style="padding:5px 8px">£${(r.overhead||0).toLocaleString('en-GB')}</td>
       <td style="padding:5px 8px">£${(r.billing||0).toLocaleString('en-GB')}</td>
+      <td style="padding:5px 8px">£${(r.labour||0).toLocaleString('en-GB')}</td>
+      <td style="padding:5px 8px">£${(r.overhead||0).toLocaleString('en-GB')}</td>
+      <td style="padding:5px 8px">£${(r.materials||0).toLocaleString('en-GB')}</td>
       <td style="padding:5px 8px;color:#dc2626;font-size:11px">${r.errors.join(', ')}</td>
     </tr>`;
   });
@@ -2144,7 +2157,7 @@ function initForecastControls() {
   fcStartMonth = start;
   fcLength = 'all';
   const startEl = document.getElementById('fc-start');
-  if (startEl) startEl.value = start;
+  if (startEl) startEl.value = fmtMonthInput(start);
   const lenEl = document.getElementById('fc-length');
   if (lenEl) lenEl.value = 'all';
   updateObDisplay();
@@ -2200,7 +2213,7 @@ function renderForecastSection() {
   // Sync control state from DOM
   const startEl = document.getElementById('fc-start');
   const lenEl = document.getElementById('fc-length');
-  if (startEl && startEl.value) fcStartMonth = startEl.value;
+  if (startEl && startEl.value) fcStartMonth = parseMonthInput(startEl.value) || fcStartMonth;
   if (lenEl) fcLength = lenEl.value === 'all' ? 'all' : parseInt(lenEl.value);
 
   // Ensure controls exist (re-render the controls block if section was wiped)
@@ -2208,7 +2221,7 @@ function renderForecastSection() {
     el.innerHTML = `
     <div style="background:#fff;border:1px solid #e8e8e8;border-radius:10px;padding:1rem 1.25rem;margin-bottom:1.25rem;">
       <div style="display:flex;flex-wrap:wrap;align-items:flex-end;gap:16px;margin-bottom:.75rem;">
-        <div><label style="margin-bottom:4px">Start from</label><input type="month" id="fc-start" style="width:160px" onchange="renderForecastSection()"></div>
+        <div><label style="margin-bottom:4px">Start from</label><input type="text" id="fc-start" style="width:100px" placeholder="MM/YY" onchange="renderForecastSection()"></div>
         <div><label style="margin-bottom:4px">Show</label>
           <select id="fc-length" style="width:180px" onchange="onFcLengthChange()">
             <option value="3">3 months</option><option value="6">6 months</option>
@@ -2223,7 +2236,7 @@ function renderForecastSection() {
         <div style="font-size:13px;font-weight:500;color:#1a1a1a;white-space:nowrap">Closing balance</div>
         <div style="display:flex;align-items:center;gap:6px">
           <span style="font-size:13px;color:#555">£</span>
-          <input type="number" id="fc-opening-balance" style="width:130px;font-size:13px;padding:5px 8px" placeholder="Enter balance" oninput="renderForecastSection()">
+          <input type="number" id="fc-opening-balance" style="width:130px;font-size:13px;padding:5px 8px" placeholder="Enter balance">
           <button class="btn btn-primary btn-sm" onclick="saveOpeningBalance()">Save</button>
         </div>
         <div style="font-size:12px;color:#888" id="ob-month-label"></div>
@@ -2231,7 +2244,7 @@ function renderForecastSection() {
       </div>
     </div>
     <div id="fc-content"></div>`;
-    document.getElementById('fc-start').value = fcStartMonth || getCurrentMonth();
+    document.getElementById('fc-start').value = fmtMonthInput(fcStartMonth || getCurrentMonth());
     document.getElementById('fc-length').value = fcLength === 'all' ? 'all' : String(fcLength);
     updateObDisplay();
   }
@@ -2787,10 +2800,11 @@ function renderCreditsSection() {
         </div>
         <div id="${pickId}" style="display:none;align-items:center;gap:6px;flex-wrap:wrap">
           <label style="font-size:12px;color:#555;margin:0">Month received:</label>
-          <input type="month" id="cr-month-input-${idx}"
-            style="font-size:12px;padding:3px 6px;border:1px solid #ddd;border-radius:6px"
-            value="${cur}">
-          <button onclick="toggleCreditReceived(${idx},true,document.getElementById('cr-month-input-${idx}').value)"
+          <input type="text" id="cr-month-input-${idx}"
+            placeholder="MM/YY"
+            style="font-size:12px;padding:3px 6px;border:1px solid #ddd;border-radius:6px;width:70px"
+            value="${fmtMonthInput(cur)}">
+          <button onclick="toggleCreditReceived(${idx},true,parseMonthInput(document.getElementById('cr-month-input-${idx}').value))"
             style="padding:3px 10px;font-size:12px;border:1px solid #bbf7d0;border-radius:6px;background:#dcfce7;color:#15803d;cursor:pointer;font-family:inherit">Confirm</button>
           <button onclick="document.getElementById('${pickId}').style.display='none';document.getElementById('${btnId}').style.display='block'"
             style="padding:3px 8px;font-size:12px;border:1px solid #ddd;border-radius:6px;background:#f5f5f5;color:#888;cursor:pointer;font-family:inherit">Cancel</button>
@@ -2831,7 +2845,7 @@ function openAddCredit() {
   ['cr-name','cr-ref','cr-notes','cr-amount'].forEach(id => document.getElementById(id).value = '');
   document.getElementById('cr-cat').value = 'retention';
   const now = new Date();
-  document.getElementById('cr-month').value = now.getFullYear() + '-' + String(now.getMonth()+1).padStart(2,'0');
+  document.getElementById('cr-month').value = fmtMonthInput(now.getFullYear() + '-' + String(now.getMonth()+1).padStart(2,'0'));
   document.getElementById('credit-modal-backdrop').classList.add('open');
 }
 
@@ -2842,7 +2856,7 @@ function openEditCredit(idx) {
   document.getElementById('cr-name').value = c.name;
   document.getElementById('cr-cat').value = c.category;
   document.getElementById('cr-amount').value = c.amount;
-  document.getElementById('cr-month').value = c.expectedMonth || '';
+  document.getElementById('cr-month').value = fmtMonthInput(c.expectedMonth || '');
   document.getElementById('cr-ref').value = c.ref || '';
   document.getElementById('cr-notes').value = c.notes || '';
   document.getElementById('credit-modal-backdrop').classList.add('open');
@@ -2857,7 +2871,7 @@ async function saveCredit() {
     id: editCreditIdx !== null ? credits[editCreditIdx].id : undefined,
     name, category: document.getElementById('cr-cat').value,
     amount: parseFloat(document.getElementById('cr-amount').value) || 0,
-    expectedMonth: document.getElementById('cr-month').value,
+    expectedMonth: parseMonthInput(document.getElementById('cr-month').value),
     ref: document.getElementById('cr-ref').value.trim(),
     notes: document.getElementById('cr-notes').value.trim(),
     received: editCreditIdx !== null ? credits[editCreditIdx].received : false,
@@ -2918,7 +2932,7 @@ function openAddJob() {
   document.getElementById('f-existing-fields').style.display = 'none';
   document.getElementById('f-actuals-summary').style.display = 'none';
   document.getElementById('f-retention-calc').textContent = 'Retention held will be calculated automatically';
-  const now = new Date(); document.getElementById('f-start').value = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0');
+  const now = new Date(); document.getElementById('f-start').value = fmtMonthInput(now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0'));
   document.getElementById('modal-backdrop').classList.add('open');
 }
 
@@ -2927,7 +2941,7 @@ function editJob(idx) {
   document.getElementById('modal-title').textContent = 'Edit job';
   document.getElementById('f-name').value = j.name; document.getElementById('f-client').value = j.client;
   document.getElementById('f-project').value = j.projectName || '';
-  document.getElementById('f-start').value = j.start; document.getElementById('f-dur').value = j.dur;
+  document.getElementById('f-start').value = fmtMonthInput(j.start); document.getElementById('f-dur').value = j.dur;
   document.getElementById('f-contract').value = j.contract; document.getElementById('f-labour').value = j.labour;
   document.getElementById('f-materials').value = j.materials; document.getElementById('f-overhead').value = j.overhead;
   document.getElementById('f-retention').value = j.retention; document.getElementById('f-status').value = j.status;
@@ -2985,7 +2999,7 @@ async function saveJob() {
   if (!name) { alert('Please enter a job name.'); return; }
 
   const isExisting = document.getElementById('f-existing').checked;
-  const startVal = document.getElementById('f-start').value;
+  const startVal = parseMonthInput(document.getElementById('f-start').value);
   const durVal = parseInt(document.getElementById('f-dur').value) || 1;
   const retPct = parseFloat(document.getElementById('f-retention').value) || 0;
 
