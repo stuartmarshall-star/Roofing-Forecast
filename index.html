@@ -284,8 +284,9 @@
     <div class="form-grid">
       <div><label>Description</label><input id="cr-name" placeholder="e.g. Retention — 14 Mill Lane"></div>
       <div><label>Category</label>
-        <select id="cr-cat">
+        <select id="cr-cat" onchange="toggleCreditJobLink()">
           <option value="retention">Old retention</option>
+          <option value="deposit">Deposit</option>
           <option value="variation">Variation order</option>
           <option value="contra">Contra recovery</option>
           <option value="other">Other</option>
@@ -295,8 +296,16 @@
     </div>
     <div class="form-grid">
       <div><label>Expected receipt month</label><input type="text" id="cr-month" placeholder="MM/YY" style="width:100px"></div>
-      <div><label>Client / Job ref</label><input id="cr-ref" placeholder="Optional reference"></div>
+      <div id="cr-job-link-wrap">
+        <label>Linked job</label>
+        <select id="cr-job-link">
+          <option value="">— Select job —</option>
+        </select>
+      </div>
       <div><label>Notes</label><input id="cr-notes" placeholder="Optional notes"></div>
+    </div>
+    <div id="cr-deposit-note" style="display:none;font-size:12px;color:#a16207;background:#fef9c3;border-radius:6px;padding:8px 12px;margin-bottom:1rem">
+      Deposit will reduce the remaining forecast billing for the linked job by this amount.
     </div>
     <div class="modal-footer">
       <button class="btn" onclick="closeCreditModal()">Cancel</button>
@@ -335,6 +344,7 @@
       <div><label>Retention % held by client</label><input type="number" id="f-retention" value="5" min="0" max="100" oninput="updateRetentionCalc()"></div>
       <div><label>Payment terms</label>
         <select id="f-payment-terms">
+          <option value="0">Same month (on invoice)</option>
           <option value="1">30 days following month</option>
           <option value="2">45 days following month</option>
         </select>
@@ -415,6 +425,8 @@ const CORRECT_PIN = '1976';
     notes text,
     received boolean default false,
     received_month text,
+    linked_job_ref text,
+    deposit_actual_month text,
     created_at timestamptz default now()
   );
   alter table credits enable row level security;
@@ -764,7 +776,9 @@ function dbToCredit(row) {
     expectedMonth: row.expected_month || '',
     ref: row.ref || '', notes: row.notes || '',
     received: row.received || false,
-    receivedMonth: row.received_month || ''
+    receivedMonth: row.received_month || '',
+    linkedJobRef: row.linked_job_ref || '',
+    depositActualMonth: row.deposit_actual_month || ''
   };
 }
 
@@ -772,7 +786,9 @@ function creditToDb(c) {
   return {
     name: c.name, category: c.category, amount: c.amount,
     expected_month: c.expectedMonth, ref: c.ref, notes: c.notes,
-    received: c.received, received_month: c.receivedMonth || null
+    received: c.received, received_month: c.receivedMonth || null,
+    linked_job_ref: c.linkedJobRef || null,
+    deposit_actual_month: c.depositActualMonth || null
   };
 }
 
@@ -874,6 +890,16 @@ function buildSchedule(job, field) {
   const originalTotal = field === 'billing' ? job.contract * (1 - job.retention / 100) : job[field];
   let spentActual = 0;
   const actMonths = new Set();
+  let hasPreStartDeposit = false;
+  // For billing, count pre-start deposit actuals so reforecast reduces remaining correctly
+  if (field === 'billing') {
+    Object.keys(job.actuals).forEach(m => {
+      if (m < job.start && job.actuals[m]._depositRef && job.actuals[m].billing !== undefined) {
+        spentActual += job.actuals[m].billing;
+        hasPreStartDeposit = true;
+      }
+    });
+  }
   months.forEach(m => {
     const a = job.actuals[m] && job.actuals[m][field] !== undefined ? job.actuals[m][field] : null;
     if (a !== null) { spentActual += a; actMonths.add(m); }
@@ -881,7 +907,7 @@ function buildSchedule(job, field) {
   const remaining = originalTotal - spentActual;
   const remainingMonths = months.filter(m => !actMonths.has(m));
   const reforecastPM = remainingMonths.length > 0 ? remaining / remainingMonths.length : 0;
-  const hasActuals = actMonths.size > 0;
+  const hasActuals = actMonths.size > 0 || hasPreStartDeposit;
   const result = {};
   months.forEach(m => {
     const a = job.actuals[m] && job.actuals[m][field] !== undefined ? job.actuals[m][field] : null;
@@ -981,9 +1007,17 @@ function getRetentionReceivedForMonth(month) {
 function getJobBillingForMonth(j, month) {
   const ms = getMonths(j.start, j.dur);
   if (!ms.includes(month)) return { gross: 0, ret: 0 };
-  // Get the net billing value for this month from the reforecast schedule
-  const netBilling = buildSchedule(j, 'billing')[month].value;
-  // Gross = net / (1 - retention%) so retention is consistent with the reforecast net
+  let netBilling = buildSchedule(j, 'billing')[month].value;
+  // Strip deposit amount from lagged billing — deposit cash is already in the Credits column
+  // so must not flow through the payment terms lag as well
+  const depositRef = j.actuals[month] && j.actuals[month]._depositRef;
+  if (depositRef) {
+    const depositCredit = credits.find(c => c.id === depositRef);
+    if (depositCredit) {
+      const depositNet = depositCredit.amount * (1 - (j.retention || 0) / 100);
+      netBilling = Math.max(0, netBilling - depositNet);
+    }
+  }
   const retRate = j.retention / 100;
   const gross = retRate < 1 ? netBilling / (1 - retRate) : netBilling;
   const ret = gross - netBilling;
@@ -1483,7 +1517,7 @@ function handleCsvImport(input) {
       const materials = parseFloat(row.materials_cost) || 0;
       const overhead  = parseFloat(row.overhead_cost) || 0;
       const retention = parseFloat(row.retention_pct) || 0;
-      const terms     = parseInt(row.payment_terms) === 45 ? 2 : 1;
+      const terms = parseInt(row.payment_terms) === 45 ? 2 : parseInt(row.payment_terms) === 0 ? 0 : 1;
       const moiety    = parseInt(row.defects_period) === 24 ? 24 : 12;
       const labTD     = parseFloat(row.labour_paid_to_date) || 0;
       const matTD     = parseFloat(row.materials_paid_to_date) || 0;
@@ -1935,6 +1969,12 @@ function renderActualsSection() {
   const fields = ['labour', 'materials', 'overhead', 'billing'];
   const scheds = {}; fields.forEach(f => { scheds[f] = buildSchedule(j, f); });
 
+  // Find any deposit actual months that fall before the job start — include them in the table
+  const preStartDepositMonths = Object.keys(j.actuals)
+    .filter(m => m < j.start && j.actuals[m]._depositRef)
+    .sort();
+  const allActualsMonths = [...preStartDepositMonths, ...months];
+
   // Pills — show job name and client
   let pills = '<div class="pill-row">' + jobs.map((jj, i) => {
     const label = jj.projectName
@@ -1950,7 +1990,15 @@ function renderActualsSection() {
         ${j.client ? `<div style="font-size:13px;color:#888;margin-top:2px">${j.client}</div>` : ''}
       </div>
       <button class="btn btn-sm" onclick="editJob(${activeActualsJob})">Edit job details</button>
-    </div>`;
+    </div>
+    ${(() => {
+      const preStart = credits.filter(c => c.category==='deposit' && c.linkedJobRef===j.name && c.received && c.receivedMonth < j.start);
+      if (!preStart.length) return '';
+      return `<div style="background:#dbeafe;border:1px solid #93c5fd;border-radius:8px;padding:8px 14px;margin-bottom:1rem;font-size:12px;color:#1d4ed8">
+        <strong>Pre-start deposit${preStart.length>1?'s':''} received:</strong>
+        ${preStart.map(c=>`${c.name} — ${fmt(c.amount)} received ${monthLabel(c.receivedMonth)}, recorded against ${monthLabel(j.start)} (project start)`).join(' &nbsp;|&nbsp; ')}
+      </div>`;
+    })()}`;
 
   // Balance strip
   let bal = '<div class="balance-strip">';
@@ -1990,6 +2038,9 @@ function renderActualsSection() {
       <div style="font-size:11px;color:#888;margin-top:2px">
         <span style="color:#16a34a">Received: ${fmt(bs.actualSpent)}</span> &nbsp;|&nbsp;
         Still to bill: ${fmt(bs.balance)} &nbsp;|&nbsp; Retention: ${fmt(j.contract * j.retention / 100)}
+        ${credits.filter(c=>c.category==='deposit'&&c.linkedJobRef===j.name).length > 0
+          ? `&nbsp;|&nbsp; <span style="color:#1d4ed8">Deposits: ${fmt(credits.filter(c=>c.category==='deposit'&&c.linkedJobRef===j.name).reduce((s,c)=>s+c.amount,0))} (${credits.filter(c=>c.category==='deposit'&&c.linkedJobRef===j.name&&c.received).length} received)</span>`
+          : ''}
       </div>
       <div class="progress-bar-wrap" style="margin-top:6px"><div class="progress-bar" style="width:${Math.min(bpct,100)}%;background:#1d4ed8"></div></div>
     </div>
@@ -2068,28 +2119,47 @@ function renderActualsSection() {
   // Note: cashflow column applies cash timing — materials paid following month, billing received per payment terms
   let tbl = '<div class="card" style="padding:0;overflow:hidden"><table><thead><tr><th>Month</th><th>Labour</th><th>Materials <span style="font-size:10px;color:#888;font-weight:400">(incurred)</span></th><th>Overhead</th><th>Total cost</th><th>Billing recv. <span style="font-size:10px;color:#888;font-weight:400">(incurred)</span></th><th>Type</th></tr></thead><tbody>';
 
-  months.forEach(m => {
+  allActualsMonths.forEach(m => {
     const isPast = m < cur;
     const isCurrentMonth = m === cur;
-    const vals = {}; fields.forEach(f => { vals[f] = scheds[f][m]; });
+    const isPreStart = m < j.start;
+    const isDepositMonth = !!(j.actuals[m] && j.actuals[m]._depositRef);
+
+    // For pre-start deposit months, use zero forecast values (no schedule entry)
+    const vals = {};
+    if (isPreStart) {
+      fields.forEach(f => { vals[f] = { value: 0, type: 'actual' }; });
+    } else {
+      fields.forEach(f => { vals[f] = scheds[f][m]; });
+    }
+
     const tc = vals.labour.value + vals.materials.value + vals.overhead.value;
-    const cash = vals.billing.value - tc;
-    const hasAct = fields.some(f => vals[f].type === 'actual');
-    const hasRef = fields.some(f => vals[f].type === 'reforecast');
+    const hasAct = isPreStart ? isDepositMonth : fields.some(f => vals[f].type === 'actual');
+    const hasRef = !isPreStart && fields.some(f => vals[f].type === 'reforecast');
     const rowType = hasAct ? 'actual' : hasRef ? 'reforecast' : 'forecast';
-    const bg = hasAct ? 'background:#f9fafb' : isCurrentMonth ? 'background:#fffbeb' : '';
+    const bg = isPreStart ? 'background:#eff6ff' : hasAct ? 'background:#f9fafb' : isCurrentMonth ? 'background:#fffbeb' : '';
 
     function cell(field) {
       const e = vals[field];
       const a = j.actuals[m] && j.actuals[m][field] !== undefined ? j.actuals[m][field] : '';
-      if (isPast || isCurrentMonth) return `<input class="actual-input" type="number" placeholder="${Math.round(e.value)}" value="${a}" onchange="setActual(${activeActualsJob},'${m}','${field}',this.value)">`;
+      // Always editable if: past, current, pre-start deposit month, or has a deposit ref
+      const editable = isPast || isCurrentMonth || isPreStart || isDepositMonth;
+      if (editable) {
+        const depositCredit = field === 'billing' && j.actuals[m] && j.actuals[m]._depositRef
+          ? credits.find(c => c.id === j.actuals[m]._depositRef) : null;
+        const depositNote = depositCredit
+          ? `<div style="font-size:10px;color:#1d4ed8;margin-top:2px">deposit ${fmt(depositCredit.amount * (1-(j.retention||0)/100))} net</div>` : '';
+        const ph = isPreStart ? '0' : Math.round(e.value);
+        return `<div><input class="actual-input" type="number" placeholder="${ph}" value="${a}" onchange="setActual(${activeActualsJob},'${m}','${field}',this.value)">${depositNote}</div>`;
+      }
       return `<span class="${e.type === 'reforecast' ? 'reforecast-val' : 'forecast-val'}">${fmt(e.value)}</span>`;
     }
 
+    const preStartLabel = isPreStart ? ' <span style="font-size:10px;color:#1d4ed8;font-weight:400">pre-start</span>' : '';
     tbl += `<tr style="${bg}">
-      <td style="white-space:nowrap;font-weight:500">${monthLabel(m)}${isCurrentMonth ? ' <span style="font-size:10px;color:#d97706">now</span>' : ''}</td>
+      <td style="white-space:nowrap;font-weight:500">${monthLabel(m)}${isCurrentMonth ? ' <span style="font-size:10px;color:#d97706">now</span>' : ''}${preStartLabel}</td>
       ${['labour','materials','overhead'].map(f => `<td>${cell(f)}</td>`).join('')}
-      <td style="font-weight:500">${fmt(tc)}</td>
+      <td style="font-weight:500">${isPreStart ? '—' : fmt(tc)}</td>
       <td>${cell('billing')}</td>
       <td><span class="badge badge-${rowType}">${rowType}</span></td>
     </tr>`;
@@ -2140,8 +2210,12 @@ function renderActualsSection() {
 function setActual(jobIdx, month, field, val) {
   if (!jobs[jobIdx].actuals[month]) jobs[jobIdx].actuals[month] = {};
   const n = parseFloat(val);
+  // Preserve _depositRef when overwriting billing — it's metadata, not a value
+  const depositRef = jobs[jobIdx].actuals[month]._depositRef;
   if (val === '' || isNaN(n)) delete jobs[jobIdx].actuals[month][field];
   else jobs[jobIdx].actuals[month][field] = n;
+  // Restore deposit reference so undo still works correctly
+  if (depositRef) jobs[jobIdx].actuals[month]._depositRef = depositRef;
   renderAll();
   clearTimeout(saveTimer);
   saveTimer = setTimeout(() => dbSave(jobs[jobIdx]), 800);
@@ -2182,7 +2256,7 @@ function getForecastMonths() {
       const ms = getMonths(j.start, j.dur);
       if (!earliest || ms[0] < earliest) earliest = ms[0];
       // Extend by payment lag months so final billing arrives in the forecast window
-      const lagMonths = (j.paymentTerms >= 2) ? 2 : 1;
+      const lagMonths = j.paymentTerms === 0 ? 0 : (j.paymentTerms >= 2) ? 2 : 1;
       const lastJobMonth = ms[ms.length - 1];
       const extendedEnd = addMonths(lastJobMonth, lagMonths);
       if (!latest || extendedEnd > latest) latest = extendedEnd;
@@ -2277,9 +2351,10 @@ function renderForecastSection() {
         tM += buildSchedule(j,'materials')[mPrev].value;
       }
       // Billing — received based on payment terms per job
-      // 30 days (terms=1): income from previous month's billing
-      // 45 days (terms=2): income from 2 months ago billing
-      const billingMonth = (j.paymentTerms >= 2) ? mPrev2 : mPrev;
+      // terms=0: same month (on invoice)
+      // terms=1: 30 days — previous month's billing
+      // terms=2: 45 days — 2 months ago billing
+      const billingMonth = j.paymentTerms === 0 ? m : (j.paymentTerms >= 2) ? mPrev2 : mPrev;
       const prevBilling = getJobBillingForMonth(j, billingMonth);
       tGrossBilling += prevBilling.gross;
       tRetHeld += prevBilling.ret;
@@ -2411,7 +2486,7 @@ function renderForecastSection() {
       const jL  = hasThisMonth ? buildSchedule(j,'labour')[r.m].value : 0;
       const jO  = hasThisMonth ? buildSchedule(j,'overhead')[r.m].value : 0;
       const jM  = hasPrevMonth ? buildSchedule(j,'materials')[mPrev].value : 0;
-      const jBillingMonth = (j.paymentTerms >= 2) ? prevMonth(mPrev) : mPrev;
+      const jBillingMonth = j.paymentTerms === 0 ? r.m : (j.paymentTerms >= 2) ? prevMonth(mPrev) : mPrev;
       const prevBil = getJobBillingForMonth(j, jBillingMonth);
       const jGross = prevBil.gross;
       const jRet   = prevBil.ret;
@@ -2726,9 +2801,9 @@ function renderRetentionsSection() {
 }
 
 // ── Credits ───────────────────────────────────────────────────────────────────
-const CREDIT_CAT_LABELS = { retention:'Old retention', variation:'Variation order', contra:'Contra recovery', other:'Other' };
-const CREDIT_CAT_COLOURS = { retention:'#fef9c3', variation:'#dbeafe', contra:'#ede9fe', other:'#f3f4f6' };
-const CREDIT_CAT_TEXT = { retention:'#a16207', variation:'#1d4ed8', contra:'#6d28d9', other:'#4b5563' };
+const CREDIT_CAT_LABELS = { retention:'Old retention', deposit:'Deposit', variation:'Variation order', contra:'Contra recovery', other:'Other' };
+const CREDIT_CAT_COLOURS = { retention:'#fef9c3', deposit:'#dbeafe', variation:'#ede9fe', contra:'#dcfce7', other:'#f3f4f6' };
+const CREDIT_CAT_TEXT = { retention:'#a16207', deposit:'#1d4ed8', variation:'#6d28d9', contra:'#15803d', other:'#4b5563' };
 
 function getCreditReceivedForMonth(m) {
   return credits.filter(c => c.received && c.receivedMonth === m).reduce((s, c) => s + c.amount, 0);
@@ -2768,7 +2843,7 @@ function renderCreditsSection() {
   html += `<div class="card" style="padding:0;overflow:hidden">
   <table style="font-size:13px">
   <thead><tr>
-    <th>Description</th><th>Category</th><th>Ref</th>
+    <th>Description</th><th>Category</th><th>Linked job</th>
     <th>Expected</th><th>Amount</th><th>Status</th><th>Action</th><th></th>
   </tr></thead><tbody>`;
 
@@ -2814,7 +2889,7 @@ function renderCreditsSection() {
     html += `<tr style="${bg};border-bottom:1px solid #f0f0f0">
       <td><strong>${c.name}</strong>${c.notes?`<div style="font-size:11px;color:#888">${c.notes}</div>`:''}  </td>
       <td>${catBadge}</td>
-      <td style="font-size:12px;color:#888">${c.ref||'—'}</td>
+      <td style="font-size:12px;color:#888">${c.linkedJobRef ? `<span style="color:#1d4ed8">${c.linkedJobRef}</span>` : '—'}</td>
       <td style="white-space:nowrap">${c.expectedMonth ? monthLabel(c.expectedMonth) : '—'}</td>
       <td class="${c.received?'green':''}" style="font-weight:500">${c.received?'+':''}${fmt(c.amount)}</td>
       <td>${statusCell}</td>
@@ -2834,18 +2909,74 @@ async function toggleCreditReceived(idx, received, month) {
   const c = credits[idx];
   c.received = received;
   c.receivedMonth = received ? (month || getCurrentMonth()) : '';
+
+  if (c.category === 'deposit' && c.linkedJobRef) {
+    const jobIdx = jobs.findIndex(j => j.name === c.linkedJobRef);
+    if (jobIdx >= 0) {
+      const j = jobs[jobIdx];
+      const netDeposit = c.amount * (1 - (j.retention || 0) / 100);
+
+      // Step 1: Always clean up any previously written deposit actual first
+      if (c.depositActualMonth && j.actuals[c.depositActualMonth]) {
+        if (j.actuals[c.depositActualMonth]._depositRef === c.id) {
+          j.actuals[c.depositActualMonth].billing = Math.max(0,
+            (j.actuals[c.depositActualMonth].billing || 0) - netDeposit);
+          if (j.actuals[c.depositActualMonth].billing === 0)
+            delete j.actuals[c.depositActualMonth].billing;
+          delete j.actuals[c.depositActualMonth]._depositRef;
+        }
+        c.depositActualMonth = '';
+      }
+
+      // Step 2: If marking as received, write to actual received month (even if before job start)
+      if (received && c.receivedMonth) {
+        const targetMonth = c.receivedMonth;
+        if (!j.actuals[targetMonth]) j.actuals[targetMonth] = {};
+        j.actuals[targetMonth].billing = (j.actuals[targetMonth].billing || 0) + netDeposit;
+        j.actuals[targetMonth]._depositRef = c.id;
+        c.depositActualMonth = targetMonth;
+      }
+
+      await dbSave(j);
+    }
+  }
+
   renderAll();
   await dbSaveCredit(c);
   renderAll();
 }
 
+function toggleCreditJobLink() {
+  const cat = document.getElementById('cr-cat') ? document.getElementById('cr-cat').value : '';
+  const isDeposit = cat === 'deposit';
+  const wrap = document.getElementById('cr-job-link-wrap');
+  const note = document.getElementById('cr-deposit-note');
+  if (wrap) wrap.style.display = isDeposit ? '' : 'none';
+  if (note) note.style.display = isDeposit ? '' : 'none';
+}
+
+function populateCreditJobDropdown(selectedRef) {
+  const sel = document.getElementById('cr-job-link');
+  if (!sel) return;
+  sel.innerHTML = '<option value="">— Select job —</option>';
+  jobs.forEach(j => {
+    const label = j.name + (j.projectName ? ' · ' + j.projectName : '');
+    const opt = document.createElement('option');
+    opt.value = j.name;
+    opt.textContent = label;
+    if (j.name === selectedRef) opt.selected = true;
+    sel.appendChild(opt);
+  });
+}
+
 function openAddCredit() {
   editCreditIdx = null;
   document.getElementById('credit-modal-title').textContent = 'Add credit';
-  ['cr-name','cr-ref','cr-notes','cr-amount'].forEach(id => document.getElementById(id).value = '');
+  ['cr-name','cr-notes','cr-amount'].forEach(id => document.getElementById(id).value = '');
   document.getElementById('cr-cat').value = 'retention';
-  const now = new Date();
-  document.getElementById('cr-month').value = fmtMonthInput(now.getFullYear() + '-' + String(now.getMonth()+1).padStart(2,'0'));
+  document.getElementById('cr-month').value = fmtMonthInput(getCurrentMonth());
+  populateCreditJobDropdown('');
+  toggleCreditJobLink();
   document.getElementById('credit-modal-backdrop').classList.add('open');
 }
 
@@ -2857,8 +2988,9 @@ function openEditCredit(idx) {
   document.getElementById('cr-cat').value = c.category;
   document.getElementById('cr-amount').value = c.amount;
   document.getElementById('cr-month').value = fmtMonthInput(c.expectedMonth || '');
-  document.getElementById('cr-ref').value = c.ref || '';
   document.getElementById('cr-notes').value = c.notes || '';
+  populateCreditJobDropdown(c.linkedJobRef || '');
+  toggleCreditJobLink();
   document.getElementById('credit-modal-backdrop').classList.add('open');
 }
 
@@ -2867,15 +2999,16 @@ function closeCreditModal() { document.getElementById('credit-modal-backdrop').c
 async function saveCredit() {
   const name = document.getElementById('cr-name').value.trim();
   if (!name) { alert('Please enter a description.'); return; }
+  const cat = document.getElementById('cr-cat').value;
   const credit = {
     id: editCreditIdx !== null ? credits[editCreditIdx].id : undefined,
-    name, category: document.getElementById('cr-cat').value,
+    name, category: cat,
     amount: parseFloat(document.getElementById('cr-amount').value) || 0,
     expectedMonth: parseMonthInput(document.getElementById('cr-month').value),
-    ref: document.getElementById('cr-ref').value.trim(),
-    notes: document.getElementById('cr-notes').value.trim(),
+    ref: '', notes: document.getElementById('cr-notes').value.trim(),
     received: editCreditIdx !== null ? credits[editCreditIdx].received : false,
-    receivedMonth: editCreditIdx !== null ? credits[editCreditIdx].receivedMonth : ''
+    receivedMonth: editCreditIdx !== null ? credits[editCreditIdx].receivedMonth : '',
+    linkedJobRef: cat === 'deposit' ? (document.getElementById('cr-job-link').value || '') : ''
   };
   if (editCreditIdx !== null) credits[editCreditIdx] = credit; else credits.push(credit);
   closeCreditModal(); renderAll();
