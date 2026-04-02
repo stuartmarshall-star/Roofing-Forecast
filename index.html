@@ -646,7 +646,7 @@ function showBalancePrompt(month) {
   div.style.cssText = 'position:fixed;bottom:1.5rem;right:1.5rem;background:#fff;border:1px solid #fca5a5;border-radius:12px;padding:1.25rem 1.5rem;box-shadow:0 4px 20px rgba(0,0,0,.12);z-index:200;width:min(360px,90vw)';
   div.innerHTML = `
     <div style="font-size:14px;font-weight:600;margin-bottom:4px;color:#dc2626">⚠ Closing balance needed</div>
-    <div style="font-size:13px;color:#666;margin-bottom:12px">What was your bank balance at the end of <strong>${monthLabel(month)}</strong>, after costs were paid but before any income arrived?</div>
+    <div style="font-size:13px;color:#666;margin-bottom:12px">Enter your actual bank statement balance at the end of <strong>${monthLabel(month)}</strong>.</div>
     <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px">
       <span style="font-size:13px;color:#555">£</span>
       <input type="number" id="prompt-balance-input" placeholder="0"
@@ -2476,25 +2476,18 @@ function renderForecastSection() {
   }
 
   let cumulative = anchorBalance;
-  let carryForward = 0; // billing due in an actual-balance month that hasn't landed yet
   rows.forEach((r, ri) => {
     if (balanceHistory[r.m] !== undefined) {
-      // This month has a recorded actual balance.
-      // Billing income due this month (per payment lag) hasn't been included in the closing
-      // balance (which is costs only, before income). Carry it forward to the next month.
-      carryForward = r.tNetBilling + r.tRetReceived + r.tCreditsReceived;
+      // Recorded actual bank balance — use it directly as the anchor
       r.cumCash = balanceHistory[r.m];
       r.cumIsActual = true;
-      r.carryForwardNote = carryForward > 0 ? carryForward : 0;
+      r.carryForwardNote = 0;
       cumulative = balanceHistory[r.m];
     } else {
-      // Add any income carried forward from the previous actual-balance month
-      const cf = carryForward;
-      carryForward = 0;
-      cumulative += r.cash + cf;
+      cumulative += r.cash;
       r.cumCash = cumulative;
       r.cumIsActual = false;
-      r.carryForwardNote = cf > 0 ? cf : 0;
+      r.carryForwardNote = 0;
     }
   });
 
@@ -2642,7 +2635,7 @@ function renderForecastSection() {
             <button onclick="cancelBalanceEdit(${ri})"
               style="padding:2px 8px;font-size:11px;border:1px solid #ddd;border-radius:4px;background:#f5f5f5;color:#888;cursor:pointer;font-family:inherit">✕</button>
           </div>` :
-          `${r.cumCash>=0?'+':''}${fmt(r.cumCash)}${r.carryForwardNote>0?`<div style="font-size:10px;color:#1d4ed8">incl. ${fmt(r.carryForwardNote)} b/fwd</div>`:''}`
+          `${r.cumCash>=0?'+':''}${fmt(r.cumCash)}`
         }
       </td>
     </tr>`;
