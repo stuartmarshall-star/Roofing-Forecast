@@ -217,15 +217,16 @@
     </div>
     <!-- Closing balance — forecast page only -->
     <div id="ob-strip" style="display:flex;align-items:center;gap:12px;border-top:1px solid #f0f0f0;padding-top:.75rem;margin-top:.25rem;flex-wrap:wrap">
-      <div style="font-size:13px;font-weight:500;color:#1a1a1a;white-space:nowrap">Closing balance</div>
-      <div style="display:flex;align-items:center;gap:6px">
+      <div style="font-size:13px;font-weight:500;color:#1a1a1a;white-space:nowrap">Bank balance</div>
+      <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+        <input type="text" id="ob-month-select" placeholder="MM/YY" style="width:75px;font-size:13px;padding:5px 8px" oninput="onObMonthChange()">
         <span style="font-size:13px;color:#555">£</span>
         <input type="number" id="fc-opening-balance" style="width:130px;font-size:13px;padding:5px 8px" placeholder="Enter balance">
         <button class="btn btn-primary btn-sm" onclick="saveOpeningBalance()">Save</button>
-        <button class="btn btn-sm" id="ob-reset-btn" style="display:none" onclick="resetOpeningBalance()">Reset</button>
+        <button class="btn btn-sm" id="ob-reset-btn" style="display:none" onclick="resetOpeningBalance()">Clear</button>
       </div>
       <div style="font-size:12px;color:#888" id="ob-month-label"></div>
-      <div style="font-size:12px;color:#aaa;margin-left:auto">Bank balance at end of previous month, after costs paid, before income received</div>
+      <div style="font-size:12px;color:#aaa;margin-left:auto">Actual bank balance for any month</div>
     </div>
   </div>
 </div>
@@ -682,32 +683,60 @@ async function confirmBalancePrompt(month) {
   await saveBalanceHistory();
 }
 
+function getObSelectedMonth() {
+  const sel = document.getElementById('ob-month-select');
+  if (sel && sel.value.trim()) {
+    const parsed = parseMonthInput(sel.value.trim());
+    if (parsed) return parsed;
+  }
+  return prevMonth(getCurrentMonth());
+}
+
+function onObMonthChange() {
+  const m = getObSelectedMonth();
+  const obEl = document.getElementById('fc-opening-balance');
+  if (obEl) obEl.value = balanceHistory[m] !== undefined ? balanceHistory[m] : '';
+  updateObDisplay();
+}
+
 function updateObDisplay() {
-  const obEl  = document.getElementById('fc-opening-balance');
-  const lbl   = document.getElementById('ob-month-label');
-  const strip = document.getElementById('ob-strip');
+  const obEl     = document.getElementById('fc-opening-balance');
+  const lbl      = document.getElementById('ob-month-label');
+  const strip    = document.getElementById('ob-strip');
   const resetBtn = document.getElementById('ob-reset-btn');
   if (!obEl || !strip) return;
 
-  const prevM = prevMonth(getCurrentMonth());
-  const saved = balanceHistory[prevM] !== undefined;
+  const prevM     = prevMonth(getCurrentMonth());
+  const selEl     = document.getElementById('ob-month-select');
+  // Pre-fill month selector with previous month if empty
+  if (selEl && !selEl.value.trim()) selEl.value = fmtMonthInput(prevM);
+  const selectedM = getObSelectedMonth();
+  const saved     = balanceHistory[selectedM] !== undefined;
+  const prevMSaved = balanceHistory[prevM] !== undefined;
 
-  // Populate input if a balance has been saved
-  obEl.value = saved ? balanceHistory[prevM] : '';
+  // Populate amount for selected month
+  if (saved) obEl.value = balanceHistory[selectedM];
 
-  // Show/hide reset button
+  // Show clear button only when selected month has a saved value
   if (resetBtn) resetBtn.style.display = saved ? '' : 'none';
 
-  if (saved) {
-    strip.style.cssText = 'display:flex;align-items:center;gap:12px;border-top:1px solid #f0f0f0;padding-top:.75rem;margin-top:.25rem;flex-wrap:wrap;background:none;border-radius:0;';
-    obEl.style.borderColor = '';
-    obEl.style.background  = '';
-    if (lbl) { lbl.style.color = '#16a34a'; lbl.textContent = '✓ Recorded ' + monthLabel(prevM); }
-  } else {
+  // Red warning if previous month (the one that needs entering) is missing
+  if (!prevMSaved) {
     strip.style.cssText = 'display:flex;align-items:center;gap:12px;padding:.6rem .85rem;margin-top:.5rem;flex-wrap:wrap;background:#fef2f2;border-radius:8px;border:1px solid #fca5a5;';
     obEl.style.borderColor = '#ef4444';
     obEl.style.background  = '#fff';
-    if (lbl) { lbl.style.color = '#dc2626'; lbl.textContent = '⚠ Enter closing balance for ' + monthLabel(prevM); }
+    if (lbl) {
+      lbl.style.color = saved ? '#16a34a' : '#dc2626';
+      lbl.textContent = saved ? '✓ ' + monthLabel(selectedM) + ' recorded' : '⚠ ' + monthLabel(prevM) + ' not yet recorded';
+    }
+  } else {
+    strip.style.cssText = 'display:flex;align-items:center;gap:12px;border-top:1px solid #f0f0f0;padding-top:.75rem;margin-top:.25rem;flex-wrap:wrap;background:none;border-radius:0;';
+    obEl.style.borderColor = '';
+    obEl.style.background  = '';
+    if (lbl) {
+      lbl.style.color = saved ? '#16a34a' : '#888';
+      lbl.textContent = saved ? '✓ ' + monthLabel(selectedM) + ' recorded' : 'Select a month to enter or update';
+    }
   }
 }
 
@@ -746,13 +775,14 @@ async function clearBalanceCell(month, ri) {
 }
 
 async function resetOpeningBalance() {
-  const prevM = prevMonth(getCurrentMonth());
-  if (!confirm(`Remove the recorded closing balance for ${monthLabel(prevM)}? The forecast will revert to using projected figures and the entry will be marked as required.`)) return;
-  delete balanceHistory[prevM];
-  if (openingBalanceMonth === prevM) {
-    openingBalance = 0;
-    openingBalanceMonth = '';
-  }
+  const month = getObSelectedMonth();
+  if (!confirm('Remove the recorded bank balance for ' + monthLabel(month) + '? The forecast will revert to projection for this month.')) return;
+  delete balanceHistory[month];
+  const sorted = Object.keys(balanceHistory).sort();
+  if (sorted.length > 0) { openingBalance = balanceHistory[sorted[sorted.length-1]]; openingBalanceMonth = sorted[sorted.length-1]; }
+  else { openingBalance = 0; openingBalanceMonth = ''; }
+  const obEl = document.getElementById('fc-opening-balance');
+  if (obEl) obEl.value = '';
   updateObDisplay();
   renderForecastSection();
   await saveBalanceHistory();
@@ -760,11 +790,12 @@ async function resetOpeningBalance() {
 
 async function saveOpeningBalance() {
   const val = parseFloat(document.getElementById('fc-opening-balance').value);
-  if (isNaN(val)) return;
-  const month = prevMonth(getCurrentMonth()); // closing balance is end of previous month
+  if (isNaN(val)) { alert('Please enter a valid balance.'); return; }
+  const month = getObSelectedMonth();
   balanceHistory[month] = val;
-  openingBalance = val;
-  openingBalanceMonth = month;
+  const sorted = Object.keys(balanceHistory).sort();
+  openingBalance = balanceHistory[sorted[sorted.length-1]];
+  openingBalanceMonth = sorted[sorted.length-1];
   updateObDisplay();
   renderForecastSection();
   await saveBalanceHistory();
@@ -2360,15 +2391,16 @@ function renderForecastSection() {
         <div style="margin-left:auto;font-size:13px;color:#888;align-self:center" id="fc-range-label"></div>
       </div>
       <div id="ob-strip" style="display:flex;align-items:center;gap:12px;border-top:1px solid #f0f0f0;padding-top:.75rem;flex-wrap:wrap">
-        <div style="font-size:13px;font-weight:500;color:#1a1a1a;white-space:nowrap">Closing balance</div>
-        <div style="display:flex;align-items:center;gap:6px">
+        <div style="font-size:13px;font-weight:500;color:#1a1a1a;white-space:nowrap">Bank balance</div>
+        <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+          <input type="text" id="ob-month-select" placeholder="MM/YY" style="width:75px;font-size:13px;padding:5px 8px" oninput="onObMonthChange()">
           <span style="font-size:13px;color:#555">£</span>
           <input type="number" id="fc-opening-balance" style="width:130px;font-size:13px;padding:5px 8px" placeholder="Enter balance">
           <button class="btn btn-primary btn-sm" onclick="saveOpeningBalance()">Save</button>
-          <button class="btn btn-sm" id="ob-reset-btn" style="display:none" onclick="resetOpeningBalance()">Reset</button>
+          <button class="btn btn-sm" id="ob-reset-btn" style="display:none" onclick="resetOpeningBalance()">Clear</button>
         </div>
         <div style="font-size:12px;color:#888" id="ob-month-label"></div>
-        <div style="font-size:12px;color:#aaa;margin-left:auto">Bank balance at end of previous month, after costs paid, before income received</div>
+        <div style="font-size:12px;color:#aaa;margin-left:auto">Actual bank balance for any month</div>
       </div>
     </div>
     <div id="fc-content"></div>`;
@@ -2381,8 +2413,14 @@ function renderForecastSection() {
 
   if (!jobs.length) { contentEl.innerHTML = '<div class="empty-state">Add jobs to see the forecast.</div>'; return; }
 
-  const allMonths = getForecastMonths();
-  if (!allMonths.length) { contentEl.innerHTML = '<div class="empty-state">No jobs fall within this date range.</div>'; return; }
+  const forecastMonths = getForecastMonths();
+  if (!forecastMonths.length) { contentEl.innerHTML = '<div class="empty-state">No jobs fall within this date range.</div>'; return; }
+
+  // Extend backwards to include any recorded balance history months before the forecast start
+  // so actuals vs forecast can run from the earliest known cash position
+  const sortedHistoryMonths = Object.keys(balanceHistory).sort();
+  const extraMonths = sortedHistoryMonths.filter(m => m < forecastMonths[0]);
+  const allMonths = [...extraMonths, ...forecastMonths];
 
   // Update range label
   const rangeEl = document.getElementById('fc-range-label');
@@ -2529,7 +2567,8 @@ function renderForecastSection() {
 
   rows.forEach((r, ri) => {
     const cur = getCurrentMonth();
-    const rowBg = r.m < cur ? 'background:#fafafa' : '';
+    const isPreForecast = !forecastMonths.includes(r.m); // history month before job schedule
+    const rowBg = isPreForecast ? 'background:#f0f9ff' : r.m < cur ? 'background:#fafafa' : '';
     const retRecCell = r.tRetReceived > 0 ? `<span style="color:#0f766e;font-weight:600">+${fmt(r.tRetReceived)}</span>` : '<span style="color:#ccc">—</span>';
     const cumClass = r.cumCash >= 0 ? 'green' : 'red';
     const cumStyle = r.cumIsActual
@@ -2574,7 +2613,7 @@ function renderForecastSection() {
     tbl += `<tr style="${rowBg}" id="row-${ri}">
       <td style="white-space:nowrap">
         <button onclick="toggleDetail('${detailId}','btn-${ri}')" id="btn-${ri}"
-          style="width:22px;height:22px;border:1px solid #ddd;border-radius:4px;background:#fff;cursor:pointer;font-size:12px;margin-right:6px;line-height:1;vertical-align:middle">+</button>${monthLabel(r.m)}
+          style="width:22px;height:22px;border:1px solid #ddd;border-radius:4px;background:#fff;cursor:pointer;font-size:12px;margin-right:6px;line-height:1;vertical-align:middle">+</button>${monthLabel(r.m)}${isPreForecast ? ' <span style="font-size:10px;color:#0284c7">history</span>' : ''}
       </td>
       <td>
         <strong>${fmt(r.tC + r.tLiab)}</strong>
