@@ -1170,7 +1170,7 @@ function renderSummary() {
           ? '<span style="background:#fee2e2;color:#dc2626;padding:2px 8px;border-radius:8px;font-size:11px">High</span>'
           : '<span style="background:#fef9c3;color:#a16207;padding:2px 8px;border-radius:8px;font-size:11px">Medium</span>';
         html += `<tr style="background:${sevColour};border-bottom:1px solid #f0f0f0">
-          ${ri === 0 ? `<td rowspan="${risks.length}" style="font-weight:500;border-right:1px solid #f0f0f0">${j.name}</td><td rowspan="${risks.length}" style="border-right:1px solid #f0f0f0">${j.client||'—'}</td>` : ''}
+          ${ri === 0 ? '<td rowspan="'+risks.length+'" style="font-weight:500;border-right:1px solid #f0f0f0">'+j.name+'</td><td rowspan="'+risks.length+'" style="border-right:1px solid #f0f0f0">'+(j.client||'—')+'</td>' : ''}
           <td>${r.label}</td>
           <td>${sevBadge}</td>
           <td><button class="btn btn-sm" onclick="showTab('actuals');setActualsJob(${jobs.indexOf(j)})">View actuals</button></td>
