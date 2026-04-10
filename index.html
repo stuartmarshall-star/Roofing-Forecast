@@ -214,21 +214,7 @@
         <button class="btn" onclick="resetForecastControls()">Reset to today</button>
       </div>
       <div style="margin-left:auto;font-size:13px;color:#888;align-self:center" id="fc-range-label"></div>
-    </div>
-    <!-- Closing balance — forecast page only -->
-    <div id="ob-strip" style="display:flex;align-items:center;gap:12px;border-top:1px solid #f0f0f0;padding-top:.75rem;margin-top:.25rem;flex-wrap:wrap">
-      <div style="font-size:13px;font-weight:500;color:#1a1a1a;white-space:nowrap">Bank balance</div>
-      <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
-        <input type="text" id="ob-month-select" placeholder="MM/YY" style="width:75px;font-size:13px;padding:5px 8px" oninput="onObMonthChange()">
-        <span style="font-size:13px;color:#555">£</span>
-        <input type="number" id="fc-opening-balance" style="width:130px;font-size:13px;padding:5px 8px" placeholder="Enter balance">
-        <button class="btn btn-primary btn-sm" onclick="saveOpeningBalance()">Save</button>
-        <button class="btn btn-sm" id="ob-reset-btn" style="display:none" onclick="resetOpeningBalance()">Clear</button>
-      </div>
-      <div style="font-size:12px;color:#888" id="ob-month-label"></div>
-      <div style="font-size:12px;color:#aaa;margin-left:auto">Actual bank balance for any month</div>
-    </div>
-  </div>
+    </div>  </div>
 </div>
 
 <!-- Add/Edit Liability Modal -->
@@ -489,7 +475,7 @@ function checkPin() {
 }
 
 // Check if already authenticated this session
-try { if (sessionStorage.getItem('rf_auth') === '1') document.getElementById('pin-screen').classList.add('hidden'); } catch(e) {}
+
 
 // Allow keyboard input for PIN
 document.addEventListener('keydown', e => {
@@ -514,9 +500,6 @@ let saveTimer = null;
 let isConnected = false;
 let fcStartMonth = '';
 let fcLength = 12;
-let openingBalance = 0;
-let openingBalanceMonth = '';
-let balanceHistory = {}; // { 'YYYY-MM': amount } — actual closing balances per month
 
 // ── Supabase helpers ─────────────────────────────────────────────────────────
 function sbHeaders() {
@@ -584,236 +567,26 @@ function setSaving(msg) { document.getElementById('saving-indicator').textConten
 async function loadJobs() {
   setStatus('connecting', 'Connecting to your database...');
   try {
-    const [jobData, liabData, settingsData, creditData] = await Promise.all([
+    const [jobData, liabData, creditData] = await Promise.all([
       sbFetch('jobs?select=*&order=created_at.asc'),
       sbFetch('liabilities?select=*&order=created_at.asc').catch(() => []),
-      sbFetch('settings?select=*').catch(() => []),
       sbFetch('credits?select=*&order=created_at.asc').catch(() => [])
     ]);
     jobs = jobData.map(dbToJob);
     liabilities = liabData.map(dbToLiab);
     credits = creditData.map(dbToCredit);
 
-    // Load balance history
-    const bhSetting = settingsData.find(s => s.key === 'balance_history');
-    if (bhSetting) {
-      try { balanceHistory = JSON.parse(bhSetting.value) || {}; } catch(e) { balanceHistory = {}; }
-    }
-    // Load most recent balance as the opening balance for display
-    const months = Object.keys(balanceHistory).sort();
-    if (months.length > 0) {
-      const lastMonth = months[months.length - 1];
-      openingBalance = balanceHistory[lastMonth];
-      openingBalanceMonth = lastMonth;
-    }
-
     isConnected = true;
     setStatus('connected', 'Connected — all changes save automatically and sync live with your accountant');
     setupRealtime();
     initForecastControls();
     renderAll();
-    updateObDisplay();
     // Check if we should prompt for last month's closing balance
-    checkMonthlyBalancePrompt();
   } catch(e) {
     isConnected = false;
     setStatus('error', 'Could not connect: ' + e.message);
     renderAll();
   }
-}
-
-function checkMonthlyBalancePrompt() {
-  const cur = getCurrentMonth();
-  const prevM = prevMonth(cur);
-  // Already recorded — no prompt needed
-  if (balanceHistory[prevM] !== undefined) return;
-  // No jobs yet — skip
-  if (!jobs.length) return;
-  // Check if snoozed (Later clicked within last 2 hours)
-  try {
-    const snoozed = sessionStorage.getItem('ob_snooze');
-    if (snoozed && Date.now() < parseInt(snoozed)) return;
-  } catch(e) {}
-  // Show prompt after short delay
-  setTimeout(() => showBalancePrompt(prevM), 800);
-}
-
-function showBalancePrompt(month) {
-  const existing = document.getElementById('balance-prompt');
-  if (existing) return;
-  const div = document.createElement('div');
-  div.id = 'balance-prompt';
-  div.style.cssText = 'position:fixed;bottom:1.5rem;right:1.5rem;background:#fff;border:1px solid #fca5a5;border-radius:12px;padding:1.25rem 1.5rem;box-shadow:0 4px 20px rgba(0,0,0,.12);z-index:200;width:min(360px,90vw)';
-  div.innerHTML = `
-    <div style="font-size:14px;font-weight:600;margin-bottom:4px;color:#dc2626">⚠ Closing balance needed</div>
-    <div style="font-size:13px;color:#666;margin-bottom:12px">Enter your actual bank statement balance at the end of <strong>${monthLabel(month)}</strong>.</div>
-    <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px">
-      <span style="font-size:13px;color:#555">£</span>
-      <input type="number" id="prompt-balance-input" placeholder="0"
-        style="flex:1;font-size:13px;padding:7px 10px;border:1px solid #fca5a5;border-radius:6px">
-    </div>
-    <div style="display:flex;gap:8px;justify-content:flex-end">
-      <button onclick="snoozeBalancePrompt()" style="padding:6px 14px;font-size:13px;border:1px solid #ddd;border-radius:6px;background:#fff;cursor:pointer;color:#888">Remind me in 2 hrs</button>
-      <button onclick="confirmBalancePrompt('${month}')" style="padding:6px 14px;font-size:13px;border:1px solid #1a1a1a;border-radius:6px;background:#1a1a1a;color:#fff;cursor:pointer">Save balance</button>
-    </div>`;
-  document.body.appendChild(div);
-}
-
-function snoozeBalancePrompt() {
-  const el = document.getElementById('balance-prompt');
-  if (el) el.remove();
-  // Snooze for 2 hours
-  try { sessionStorage.setItem('ob_snooze', String(Date.now() + 2 * 60 * 60 * 1000)); } catch(e) {}
-}
-
-function dismissBalancePrompt() {
-  const el = document.getElementById('balance-prompt');
-  if (el) el.remove();
-}
-
-async function confirmBalancePrompt(month) {
-  const val = parseFloat(document.getElementById('prompt-balance-input').value);
-  if (isNaN(val)) { alert('Please enter a valid balance.'); return; }
-  balanceHistory[month] = val;
-  openingBalance = val;
-  openingBalanceMonth = month;
-  dismissBalancePrompt();
-  updateObDisplay();
-  renderForecastSection();
-  await saveBalanceHistory();
-}
-
-function getObSelectedMonth() {
-  const sel = document.getElementById('ob-month-select');
-  if (sel && sel.value.trim()) {
-    const parsed = parseMonthInput(sel.value.trim());
-    if (parsed) return parsed;
-  }
-  return prevMonth(getCurrentMonth());
-}
-
-function onObMonthChange() {
-  const m = getObSelectedMonth();
-  const obEl = document.getElementById('fc-opening-balance');
-  if (obEl) obEl.value = balanceHistory[m] !== undefined ? balanceHistory[m] : '';
-  updateObDisplay();
-}
-
-function updateObDisplay() {
-  const obEl     = document.getElementById('fc-opening-balance');
-  const lbl      = document.getElementById('ob-month-label');
-  const strip    = document.getElementById('ob-strip');
-  const resetBtn = document.getElementById('ob-reset-btn');
-  if (!obEl || !strip) return;
-
-  const prevM     = prevMonth(getCurrentMonth());
-  const selEl     = document.getElementById('ob-month-select');
-  // Pre-fill month selector with previous month if empty
-  if (selEl && !selEl.value.trim()) selEl.value = fmtMonthInput(prevM);
-  const selectedM = getObSelectedMonth();
-  const saved     = balanceHistory[selectedM] !== undefined;
-  const prevMSaved = balanceHistory[prevM] !== undefined;
-
-  // Populate amount for selected month
-  if (saved) obEl.value = balanceHistory[selectedM];
-
-  // Show clear button only when selected month has a saved value
-  if (resetBtn) resetBtn.style.display = saved ? '' : 'none';
-
-  // Red warning if previous month (the one that needs entering) is missing
-  if (!prevMSaved) {
-    strip.style.cssText = 'display:flex;align-items:center;gap:12px;padding:.6rem .85rem;margin-top:.5rem;flex-wrap:wrap;background:#fef2f2;border-radius:8px;border:1px solid #fca5a5;';
-    obEl.style.borderColor = '#ef4444';
-    obEl.style.background  = '#fff';
-    if (lbl) {
-      lbl.style.color = saved ? '#16a34a' : '#dc2626';
-      lbl.textContent = saved ? '✓ ' + monthLabel(selectedM) + ' recorded' : '⚠ ' + monthLabel(prevM) + ' not yet recorded';
-    }
-  } else {
-    strip.style.cssText = 'display:flex;align-items:center;gap:12px;border-top:1px solid #f0f0f0;padding-top:.75rem;margin-top:.25rem;flex-wrap:wrap;background:none;border-radius:0;';
-    obEl.style.borderColor = '';
-    obEl.style.background  = '';
-    if (lbl) {
-      lbl.style.color = saved ? '#16a34a' : '#888';
-      lbl.textContent = saved ? '✓ ' + monthLabel(selectedM) + ' recorded' : 'Select a month to enter or update';
-    }
-  }
-}
-
-function editBalanceCell(month, ri) {
-  document.getElementById('bal-display-' + ri).style.display = 'none';
-  document.getElementById('bal-edit-' + ri).style.display = 'flex';
-  document.getElementById('bal-input-' + ri).focus();
-  document.getElementById('bal-input-' + ri).select();
-}
-
-function cancelBalanceEdit(ri) {
-  document.getElementById('bal-display-' + ri).style.display = '';
-  document.getElementById('bal-edit-' + ri).style.display = 'none';
-}
-
-async function saveBalanceCell(month, ri) {
-  const val = parseFloat(document.getElementById('bal-input-' + ri).value);
-  if (isNaN(val)) { alert('Please enter a valid amount.'); return; }
-  balanceHistory[month] = val;
-  if (month === prevMonth(getCurrentMonth())) {
-    openingBalance = val;
-    openingBalanceMonth = month;
-  }
-  renderForecastSection();
-  updateObDisplay();
-  await saveBalanceHistory();
-}
-
-async function clearBalanceCell(month, ri) {
-  if (!confirm('Remove the recorded closing balance for ' + monthLabel(month) + '? The forecast will revert to projection for this month.')) return;
-  delete balanceHistory[month];
-  if (openingBalanceMonth === month) { openingBalance = 0; openingBalanceMonth = ''; }
-  renderForecastSection();
-  updateObDisplay();
-  await saveBalanceHistory();
-}
-
-async function resetOpeningBalance() {
-  const month = getObSelectedMonth();
-  if (!confirm('Remove the recorded bank balance for ' + monthLabel(month) + '? The forecast will revert to projection for this month.')) return;
-  delete balanceHistory[month];
-  const sorted = Object.keys(balanceHistory).sort();
-  if (sorted.length > 0) { openingBalance = balanceHistory[sorted[sorted.length-1]]; openingBalanceMonth = sorted[sorted.length-1]; }
-  else { openingBalance = 0; openingBalanceMonth = ''; }
-  const obEl = document.getElementById('fc-opening-balance');
-  if (obEl) obEl.value = '';
-  updateObDisplay();
-  renderForecastSection();
-  await saveBalanceHistory();
-}
-
-async function saveOpeningBalance() {
-  const val = parseFloat(document.getElementById('fc-opening-balance').value);
-  if (isNaN(val)) { alert('Please enter a valid balance.'); return; }
-  const month = getObSelectedMonth();
-  balanceHistory[month] = val;
-  const sorted = Object.keys(balanceHistory).sort();
-  openingBalance = balanceHistory[sorted[sorted.length-1]];
-  openingBalanceMonth = sorted[sorted.length-1];
-  updateObDisplay();
-  renderForecastSection();
-  await saveBalanceHistory();
-}
-
-async function saveBalanceHistory() {
-  if (!isConnected) return;
-  setSaving('Saving...');
-  try {
-    const existing = await sbFetch('settings?key=eq.balance_history').catch(() => []);
-    const payload = { key: 'balance_history', value: JSON.stringify(balanceHistory), month: openingBalanceMonth };
-    if (existing && existing.length > 0) {
-      await sbFetch('settings?key=eq.balance_history', { method: 'PATCH', body: JSON.stringify(payload) });
-    } else {
-      await sbFetch('settings', { method: 'POST', body: JSON.stringify(payload) });
-    }
-    setSaving('Saved ✓'); setTimeout(() => setSaving(''), 2000);
-  } catch(e) { setSaving('Save failed'); }
 }
 
 function dbToLiab(row) {
@@ -987,7 +760,7 @@ function buildSchedule(job, field) {
     const a = job.actuals[m] && job.actuals[m][field] !== undefined ? job.actuals[m][field] : null;
     if (a !== null) { spentActual += a; actMonths.add(m); }
   });
-  const remaining = originalTotal - spentActual;
+  const remaining = Math.max(0, originalTotal - spentActual);
   const remainingMonths = months.filter(m => !actMonths.has(m));
   const reforecastPM = remainingMonths.length > 0 ? remaining / remainingMonths.length : 0;
   const hasActuals = actMonths.size > 0 || hasPreStartDeposit;
@@ -1007,7 +780,7 @@ function getSummary(job, field) {
   const sched = buildSchedule(job, field);
   let actualSpent = 0;
   months.forEach(m => { if (sched[m].type === 'actual') actualSpent += sched[m].value; });
-  return { originalTotal, actualSpent, balance: originalTotal - actualSpent };
+  return { originalTotal, actualSpent, balance: Math.max(0, originalTotal - actualSpent), overrun: Math.max(0, actualSpent - originalTotal) };
 }
 
 // ── Retention engine ─────────────────────────────────────────────────────────
@@ -1327,36 +1100,6 @@ function renderSummary() {
   const actMarginPct = totalActBilling > 0 ? (totalActBilling - totalActCost) / totalActBilling * 100 : null;
   const retOutstanding = totalHeld - totalReleased;
 
-  // ── Cash position — next 3 months from forecast rows ───────────────────────
-  const cashMonths = [cur, next1, next2, next3];
-  const cashRows = cashMonths.map(m => {
-    const mPrev = prevMonth(m), mPrev2 = prevMonth(mPrev);
-    let tL=0, tM=0, tO=0, tGross=0, tRet=0;
-    jobs.forEach(j => {
-      const ms = getMonths(j.start, j.dur);
-      if (ms.includes(m)) { tL += buildSchedule(j,'labour')[m].value; tO += buildSchedule(j,'overhead')[m].value; }
-      if (ms.includes(mPrev)) tM += buildSchedule(j,'materials')[mPrev].value;
-      const bm = (j.paymentTerms >= 2) ? mPrev2 : mPrev;
-      const b = getJobBillingForMonth(j, bm);
-      tGross += b.gross; tRet += b.ret;
-    });
-    const tLiab = getTotalLiabilitiesForMonth(m);
-    const tRetRec = getRetentionReceivedForMonth(m);
-    const net = (tGross - tRet) + tRetRec - (tL + tM + tO) - tLiab;
-    return { m, net };
-  });
-
-  // Closing balance anchor
-  const sortedBal = Object.keys(balanceHistory).sort();
-  let anchor = openingBalance || 0;
-  sortedBal.forEach(bm => { if (bm <= cur) anchor = balanceHistory[bm]; });
-  let runningBal = anchor;
-  const balRows = cashRows.map(r => {
-    if (balanceHistory[r.m] !== undefined) { runningBal = balanceHistory[r.m]; return { m: r.m, bal: runningBal, isActual: true, cash: r.net }; }
-    runningBal += r.net;
-    return { m: r.m, bal: runningBal, isActual: false, cash: r.net };
-  });
-
   // ── Jobs at risk ────────────────────────────────────────────────────────────
   const atRisk = [];
   jobs.filter(j => j.status === 'active').forEach(j => {
@@ -1404,21 +1147,6 @@ function renderSummary() {
     <div class="metric"><div class="metric-label">Actual margin to date</div><div class="metric-value ${actMarginPct !== null ? (actMarginPct >= fcMarginPct ? 'green' : 'red') : ''}">${actMarginPct !== null ? fmtPct(actMarginPct) : '—'}</div><div style="font-size:11px;color:#888;margin-top:2px">${actMarginPct !== null ? (actMarginPct >= fcMarginPct ? 'Ahead of forecast' : 'Behind forecast') : 'No actuals yet'}</div></div>
     <div class="metric" style="cursor:pointer" onclick="showTab('retentions')"><div class="metric-label">Retention outstanding ↗</div><div class="metric-value red">${fmt(retOutstanding)}</div><div style="font-size:11px;color:#888;margin-top:2px">Held minus released</div></div>
   </div>`;
-
-  // Cash position
-  html += `<div style="font-size:12px;font-weight:600;color:#888;text-transform:uppercase;letter-spacing:.05em;margin-bottom:.5rem">Cash position</div>
-  <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:1.5rem">`;
-  balRows.forEach(r => {
-    const isNow = r.m === cur;
-    const cls = r.bal >= 0 ? 'green' : 'red';
-    const actualBadge = r.isActual ? '<span style="font-size:10px;background:#dcfce7;color:#15803d;padding:1px 6px;border-radius:8px;margin-left:4px">actual</span>' : '';
-    html += `<div class="metric" style="${isNow ? 'border:2px solid #1d4ed8' : ''}">
-      <div class="metric-label">${monthLabel(r.m)}${isNow ? ' <span style="color:#1d4ed8;font-size:10px">current</span>' : ''}${actualBadge}</div>
-      <div class="metric-value ${cls}">${r.bal >= 0 ? '' : ''}${fmt(r.bal)}</div>
-      <div style="font-size:11px;color:#888;margin-top:2px">Monthly: ${r.cash >= 0 ? '+' : ''}${fmt(r.cash)}</div>
-    </div>`;
-  });
-  html += '</div>';
 
   // Jobs at risk
   html += `<div style="font-size:12px;font-weight:600;color:#888;text-transform:uppercase;letter-spacing:.05em;margin-bottom:.5rem">Jobs at risk</div>
@@ -2122,9 +1850,7 @@ function renderActualsSection() {
       <div style="font-size:11px;color:#888;margin-top:2px">
         <span style="color:#16a34a">Received: ${fmt(bs.actualSpent)}</span> &nbsp;|&nbsp;
         Still to bill: ${fmt(bs.balance)} &nbsp;|&nbsp; Retention: ${fmt(j.contract * j.retention / 100)}
-        ${credits.filter(c=>c.category==='deposit'&&c.linkedJobRef===j.name).length > 0
-          ? `&nbsp;|&nbsp; <span style="color:#1d4ed8">Deposits: ${fmt(credits.filter(c=>c.category==='deposit'&&c.linkedJobRef===j.name).reduce((s,c)=>s+c.amount,0))} (${credits.filter(c=>c.category==='deposit'&&c.linkedJobRef===j.name&&c.received).length} received)</span>`
-          : ''}
+        ${(() => { const deps = credits.filter(c=>c.category==='deposit'&&c.linkedJobRef===j.name); if (!deps.length) return ''; const total=deps.reduce((s,c)=>s+c.amount,0); const rcvd=deps.filter(c=>c.received).length; return '&nbsp;|&nbsp; <span style="color:#1d4ed8">Deposits: '+fmt(total)+' ('+rcvd+' received)</span>'; })()}
       </div>
       <div class="progress-bar-wrap" style="margin-top:6px"><div class="progress-bar" style="width:${Math.min(bpct,100)}%;background:#1d4ed8"></div></div>
     </div>
@@ -2160,178 +1886,7 @@ function renderActualsSection() {
     </div>
   </div>`;
 
-  // Legend
-  const legend = `<div style="display:flex;gap:16px;font-size:12px;color:#888;margin-bottom:.75rem;flex-wrap:wrap">
-    <span><span class="badge badge-actual" style="margin-right:4px">actual</span> Figure you entered</span>
-    <span><span class="badge badge-reforecast" style="margin-right:4px">reforecast</span> Auto-adjusted from actuals</span>
-    <span><span class="badge badge-forecast" style="margin-right:4px">original forecast</span> Even spread, no actuals yet</span>
-  </div>`;
-
-  // Build chart data — original forecast vs actual per month
-  const chartMonths = months;
-  const origFcL = j.labour / j.dur;
-  const origFcM = j.materials / j.dur;
-  const origFcO = j.overhead / j.dur;
-  const origFcB = j.contract * (1 - j.retention / 100) / j.dur;
-
-  const chartFcCost  = chartMonths.map(() => Math.round(origFcL + origFcM + origFcO));
-  const chartActCost = chartMonths.map(m => {
-    const a = j.actuals[m];
-    if (!a || (a.labour === undefined && a.materials === undefined && a.overhead === undefined)) return null;
-    return Math.round((a.labour||0) + (a.materials||0) + (a.overhead||0));
-  });
-  const chartFcBil  = chartMonths.map(() => Math.round(origFcB));
-  const chartActBil = chartMonths.map(m => {
-    const a = j.actuals[m];
-    if (!a || a.billing === undefined) return null;
-    return Math.round(a.billing||0);
-  });
-
-  const chartSection = `
-    <div class="card" style="padding:1rem 1.25rem;margin-bottom:1rem">
-      <div style="font-size:13px;font-weight:500;margin-bottom:.75rem;color:#1a1a1a">Forecast vs actual</div>
-      <div style="display:flex;gap:16px;font-size:12px;color:#888;margin-bottom:.5rem;flex-wrap:wrap">
-        <span style="display:flex;align-items:center;gap:5px"><span style="width:20px;height:2px;background:#dc2626;display:inline-block"></span>Forecast costs</span>
-        <span style="display:flex;align-items:center;gap:5px"><span style="width:20px;height:2px;background:#dc2626;border-top:2px dashed #dc2626;display:inline-block"></span>Actual costs</span>
-        <span style="display:flex;align-items:center;gap:5px"><span style="width:20px;height:2px;background:#1d4ed8;display:inline-block"></span>Forecast billing</span>
-        <span style="display:flex;align-items:center;gap:5px"><span style="width:20px;height:2px;background:#1d4ed8;border-top:2px dashed #1d4ed8;display:inline-block"></span>Actual billing</span>
-      </div>
-      <div style="position:relative;height:220px"><canvas id="actualsChart"></canvas></div>
-    </div>`;
-
-  // Original simple table
-  // Note: cashflow column applies cash timing — materials paid following month, billing received per payment terms
-  let tbl = '<div class="card" style="padding:0;overflow:hidden"><table><thead><tr><th>Month</th><th>Labour</th><th>Materials <span style="font-size:10px;color:#888;font-weight:400">(incurred)</span></th><th>Overhead</th><th>Total cost</th><th>Billing recv. <span style="font-size:10px;color:#888;font-weight:400">(incurred)</span></th><th>Type</th></tr></thead><tbody>';
-
-  allActualsMonths.forEach(m => {
-    const isPast = m < cur;
-    const isCurrentMonth = m === cur;
-    const isPreStart = m < j.start;
-    const isDepositMonth = !!(j.actuals[m] && j.actuals[m]._depositRef);
-
-    // For pre-start deposit months, use zero forecast values (no schedule entry)
-    const vals = {};
-    if (isPreStart) {
-      fields.forEach(f => { vals[f] = { value: 0, type: 'actual' }; });
-    } else {
-      fields.forEach(f => { vals[f] = scheds[f][m]; });
-    }
-
-    const tc = vals.labour.value + vals.materials.value + vals.overhead.value;
-    const hasAct = isPreStart ? isDepositMonth : fields.some(f => vals[f].type === 'actual');
-    const hasRef = !isPreStart && fields.some(f => vals[f].type === 'reforecast');
-    const rowType = hasAct ? 'actual' : hasRef ? 'reforecast' : 'forecast';
-    const bg = isPreStart ? 'background:#eff6ff' : hasAct ? 'background:#f9fafb' : isCurrentMonth ? 'background:#fffbeb' : '';
-
-    function cell(field) {
-      const e = vals[field];
-      const a = j.actuals[m] && j.actuals[m][field] !== undefined ? j.actuals[m][field] : '';
-      // Always editable if: past, current, pre-start deposit month, or has a deposit ref
-      const editable = isPast || isCurrentMonth || isPreStart || isDepositMonth;
-      if (editable) {
-        const depositCredit = field === 'billing' && j.actuals[m] && j.actuals[m]._depositRef
-          ? credits.find(c => c.id === j.actuals[m]._depositRef) : null;
-        const depositNote = depositCredit
-          ? `<div style="font-size:10px;color:#1d4ed8;margin-top:2px">deposit ${fmt(depositCredit.amount * (1-(j.retention||0)/100))} net</div>` : '';
-        const ph = isPreStart ? '0' : Math.round(e.value);
-        return `<div><input class="actual-input" type="number" placeholder="${ph}" value="${a}" onchange="setActual(${activeActualsJob},'${m}','${field}',this.value)">${depositNote}</div>`;
-      }
-      return `<span class="${e.type === 'reforecast' ? 'reforecast-val' : 'forecast-val'}">${fmt(e.value)}</span>`;
-    }
-
-    const preStartLabel = isPreStart ? ' <span style="font-size:10px;color:#1d4ed8;font-weight:400">pre-start</span>' : '';
-    tbl += `<tr style="${bg}">
-      <td style="white-space:nowrap;font-weight:500">${monthLabel(m)}${isCurrentMonth ? ' <span style="font-size:10px;color:#d97706">now</span>' : ''}${preStartLabel}</td>
-      ${['labour','materials','overhead'].map(f => `<td>${cell(f)}</td>`).join('')}
-      <td style="font-weight:500">${isPreStart ? '—' : fmt(tc)}</td>
-      <td>${cell('billing')}</td>
-      <td><span class="badge badge-${rowType}">${rowType}</span></td>
-    </tr>`;
-  });
-
-  let tL=0,tM=0,tO=0,tB=0;
-  months.forEach(m=>{tL+=scheds.labour[m].value;tM+=scheds.materials[m].value;tO+=scheds.overhead[m].value;tB+=scheds.billing[m].value;});
-  const tC=tL+tM+tO;
-  tbl += `<tr style="background:#f9fafb;font-weight:600">
-    <td>Total</td><td>${fmt(tL)}</td><td>${fmt(tM)}</td><td>${fmt(tO)}</td>
-    <td>${fmt(tC)}</td><td>${fmt(tB)}</td><td></td>
-  </tr>`;
-
-  const cashTimingNote = `<div style="font-size:12px;color:#888;margin-bottom:.75rem">
-    Figures show costs and billing in the month they are <strong>incurred</strong> — not when cash moves.
-    Materials are paid the following month, billing received per payment terms.
-    See the <button onclick="showTab('forecast')" style="background:none;border:none;color:#1d4ed8;cursor:pointer;font-size:12px;padding:0;text-decoration:underline">Forecast tab</button> for cash-timed figures.
-  </div>`;
-
-  el.innerHTML = pills + jobHeader + bal + cashTimingNote + chartSection + legend + tbl + '</tbody></table></div>';
-
-  // Render chart after DOM is set
-  const actCtx = document.getElementById('actualsChart');
-  if (actCtx) {
-    new Chart(actCtx.getContext('2d'), {
-      type: 'line',
-      data: {
-        labels: chartMonths.map(monthLabel),
-        datasets: [
-          { label: 'Forecast costs',  data: chartFcCost,  borderColor: '#dc2626', backgroundColor: 'transparent', borderWidth: 2, pointRadius: 2, tension: 0.3, borderDash: [] },
-          { label: 'Actual costs',    data: chartActCost, borderColor: '#dc2626', backgroundColor: 'transparent', borderWidth: 2, pointRadius: 3, tension: 0.3, borderDash: [5,3], spanGaps: false },
-          { label: 'Forecast billing',data: chartFcBil,   borderColor: '#1d4ed8', backgroundColor: 'transparent', borderWidth: 2, pointRadius: 2, tension: 0.3, borderDash: [] },
-          { label: 'Actual billing',  data: chartActBil,  borderColor: '#1d4ed8', backgroundColor: 'transparent', borderWidth: 2, pointRadius: 3, tension: 0.3, borderDash: [5,3], spanGaps: false },
-        ]
-      },
-      options: {
-        responsive: true, maintainAspectRatio: false,
-        plugins: { legend: { display: false } },
-        scales: {
-          y: { ticks: { callback: v => '£'+(Math.abs(v)>=1000?(v/1000).toFixed(0)+'k':v), font:{size:11} }, grid:{color:'#f0f0f0'} },
-          x: { ticks: { font:{size:11}, maxRotation: months.length > 12 ? 45 : 0 }, grid:{display:false} }
-        }
-      }
-    });
-  }
-}
-
-function setActual(jobIdx, month, field, val) {
-  if (!jobs[jobIdx].actuals[month]) jobs[jobIdx].actuals[month] = {};
-  const n = parseFloat(val);
-  // Preserve _depositRef when overwriting billing — it's metadata, not a value
-  const depositRef = jobs[jobIdx].actuals[month]._depositRef;
-  if (val === '' || isNaN(n)) delete jobs[jobIdx].actuals[month][field];
-  else jobs[jobIdx].actuals[month][field] = n;
-  // Restore deposit reference so undo still works correctly
-  if (depositRef) jobs[jobIdx].actuals[month]._depositRef = depositRef;
-  renderAll();
-  clearTimeout(saveTimer);
-  saveTimer = setTimeout(() => dbSave(jobs[jobIdx]), 800);
-}
-
-function getEarliestJobStart() {
-  if (!jobs.length) return getCurrentMonth();
-  return jobs.reduce((earliest, j) => j.start < earliest ? j.start : earliest, jobs[0].start);
-}
-
-function initForecastControls() {
-  const start = getEarliestJobStart();
-  fcStartMonth = start;
-  fcLength = 'all';
-  const startEl = document.getElementById('fc-start');
-  if (startEl) startEl.value = fmtMonthInput(start);
-  const lenEl = document.getElementById('fc-length');
-  if (lenEl) lenEl.value = 'all';
-  updateObDisplay();
-}
-
-function onFcLengthChange() {
-  const val = document.getElementById('fc-length').value;
-  fcLength = val === 'all' ? 'all' : parseInt(val);
-  renderForecastSection();
-}
-
-function resetForecastControls() {
-  initForecastControls();
-  renderForecastSection();
-}
-
+// ── Forecast ──────────────────────────────────────────────────────────────────
 function getForecastMonths() {
   if (fcLength === 'all') {
     if (!jobs.length) return [];
@@ -2339,10 +1894,8 @@ function getForecastMonths() {
     jobs.forEach(j => {
       const ms = getMonths(j.start, j.dur);
       if (!earliest || ms[0] < earliest) earliest = ms[0];
-      // Extend by payment lag months so final billing arrives in the forecast window
       const lagMonths = j.paymentTerms === 0 ? 0 : (j.paymentTerms >= 2) ? 2 : 1;
-      const lastJobMonth = ms[ms.length - 1];
-      const extendedEnd = addMonths(lastJobMonth, lagMonths);
+      const extendedEnd = addMonths(ms[ms.length - 1], lagMonths);
       if (!latest || extendedEnd > latest) latest = extendedEnd;
     });
     const months = [];
@@ -2364,21 +1917,47 @@ function getForecastMonths() {
   return months;
 }
 
+function initForecastControls() {
+  const start = getEarliestJobStart();
+  fcStartMonth = start;
+  fcLength = 'all';
+  const startEl = document.getElementById('fc-start');
+  if (startEl) startEl.value = fmtMonthInput(start);
+  const lenEl = document.getElementById('fc-length');
+  if (lenEl) lenEl.value = 'all';
+}
+
+function onFcLengthChange() {
+  const val = document.getElementById('fc-length').value;
+  fcLength = val === 'all' ? 'all' : parseInt(val);
+  renderForecastSection();
+}
+
+function resetForecastControls() {
+  fcStartMonth = getCurrentMonth();
+  fcLength = 12;
+  const startEl = document.getElementById('fc-start');
+  if (startEl) startEl.value = fmtMonthInput(fcStartMonth);
+  const lenEl = document.getElementById('fc-length');
+  if (lenEl) lenEl.value = '12';
+  renderForecastSection();
+}
+
 function renderForecastSection() {
   const el = document.getElementById('forecast');
   if (!el) return;
 
   // Sync control state from DOM
   const startEl = document.getElementById('fc-start');
-  const lenEl = document.getElementById('fc-length');
+  const lenEl   = document.getElementById('fc-length');
   if (startEl && startEl.value) fcStartMonth = parseMonthInput(startEl.value) || fcStartMonth;
   if (lenEl) fcLength = lenEl.value === 'all' ? 'all' : parseInt(lenEl.value);
 
-  // Ensure controls exist (re-render the controls block if section was wiped)
+  // Ensure controls exist
   if (!document.getElementById('fc-start')) {
     el.innerHTML = `
     <div style="background:#fff;border:1px solid #e8e8e8;border-radius:10px;padding:1rem 1.25rem;margin-bottom:1.25rem;">
-      <div style="display:flex;flex-wrap:wrap;align-items:flex-end;gap:16px;margin-bottom:.75rem;">
+      <div style="display:flex;flex-wrap:wrap;align-items:flex-end;gap:16px;">
         <div><label style="margin-bottom:4px">Start from</label><input type="text" id="fc-start" style="width:100px" placeholder="MM/YY" onchange="renderForecastSection()"></div>
         <div><label style="margin-bottom:4px">Show</label>
           <select id="fc-length" style="width:180px" onchange="onFcLengthChange()">
@@ -2390,68 +1969,37 @@ function renderForecastSection() {
         <div><button class="btn" onclick="resetForecastControls()">Reset to today</button></div>
         <div style="margin-left:auto;font-size:13px;color:#888;align-self:center" id="fc-range-label"></div>
       </div>
-      <div id="ob-strip" style="display:flex;align-items:center;gap:12px;border-top:1px solid #f0f0f0;padding-top:.75rem;flex-wrap:wrap">
-        <div style="font-size:13px;font-weight:500;color:#1a1a1a;white-space:nowrap">Bank balance</div>
-        <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
-          <input type="text" id="ob-month-select" placeholder="MM/YY" style="width:75px;font-size:13px;padding:5px 8px" oninput="onObMonthChange()">
-          <span style="font-size:13px;color:#555">£</span>
-          <input type="number" id="fc-opening-balance" style="width:130px;font-size:13px;padding:5px 8px" placeholder="Enter balance">
-          <button class="btn btn-primary btn-sm" onclick="saveOpeningBalance()">Save</button>
-          <button class="btn btn-sm" id="ob-reset-btn" style="display:none" onclick="resetOpeningBalance()">Clear</button>
-        </div>
-        <div style="font-size:12px;color:#888" id="ob-month-label"></div>
-        <div style="font-size:12px;color:#aaa;margin-left:auto">Actual bank balance for any month</div>
-      </div>
     </div>
     <div id="fc-content"></div>`;
     document.getElementById('fc-start').value = fmtMonthInput(fcStartMonth || getCurrentMonth());
     document.getElementById('fc-length').value = fcLength === 'all' ? 'all' : String(fcLength);
-    updateObDisplay();
   }
 
   const contentEl = document.getElementById('fc-content') || el;
-
   if (!jobs.length) { contentEl.innerHTML = '<div class="empty-state">Add jobs to see the forecast.</div>'; return; }
 
-  const forecastMonths = getForecastMonths();
-  if (!forecastMonths.length) { contentEl.innerHTML = '<div class="empty-state">No jobs fall within this date range.</div>'; return; }
+  const allMonths = getForecastMonths();
+  if (!allMonths.length) { contentEl.innerHTML = '<div class="empty-state">No jobs fall within this date range.</div>'; return; }
 
-  // Extend backwards to include any recorded balance history months before the forecast start
-  // so actuals vs forecast can run from the earliest known cash position
-  const sortedHistoryMonths = Object.keys(balanceHistory).sort();
-  const extraMonths = sortedHistoryMonths.filter(m => m < forecastMonths[0]);
-  const allMonths = [...extraMonths, ...forecastMonths];
-
-  // Update range label
   const rangeEl = document.getElementById('fc-range-label');
   if (rangeEl) rangeEl.textContent = monthLabel(allMonths[0]) + ' – ' + monthLabel(allMonths[allMonths.length - 1]) + ' (' + allMonths.length + ' months)';
 
   const rows = allMonths.map(m => {
-    const mPrev  = prevMonth(m);          // 1 month back — materials, 30-day billing
-    const mPrev2 = prevMonth(mPrev);      // 2 months back — 45-day billing
-
+    const mPrev  = prevMonth(m);
+    const mPrev2 = prevMonth(mPrev);
     let tL=0, tM=0, tO=0, tGrossBilling=0, tRetHeld=0;
     jobs.forEach(j => {
       const ms = getMonths(j.start, j.dur);
-      // Labour + overhead — paid in month incurred
       if (ms.includes(m)) {
         tL += buildSchedule(j,'labour')[m].value;
         tO += buildSchedule(j,'overhead')[m].value;
       }
-      // Materials — 30-day account, paid following month
-      if (ms.includes(mPrev)) {
-        tM += buildSchedule(j,'materials')[mPrev].value;
-      }
-      // Billing — received based on payment terms per job
-      // terms=0: same month (on invoice)
-      // terms=1: 30 days — previous month's billing
-      // terms=2: 45 days — 2 months ago billing
+      if (ms.includes(mPrev)) tM += buildSchedule(j,'materials')[mPrev].value;
       const billingMonth = j.paymentTerms === 0 ? m : (j.paymentTerms >= 2) ? mPrev2 : mPrev;
       const prevBilling = getJobBillingForMonth(j, billingMonth);
       tGrossBilling += prevBilling.gross;
       tRetHeld += prevBilling.ret;
     });
-
     const tC = tL + tM + tO;
     const tLiab = getTotalLiabilitiesForMonth(m);
     const tRetReceived = getRetentionReceivedForMonth(m);
@@ -2461,39 +2009,7 @@ function renderForecastSection() {
     return {m, tL, tM, tO, tC, tGrossBilling, tRetHeld, tNetBilling, tLiab, tRetReceived, tCreditsReceived, cash};
   });
 
-  // Build cumulative — use actual balance history where recorded, forecast otherwise
-  const sortedBalMonths = Object.keys(balanceHistory).sort();
-  // Find anchor: last recorded month on or before first forecast month
-  let anchorBalance = 0;
-  let anchorIsSet = false;
-  sortedBalMonths.forEach(bm => {
-    if (bm <= allMonths[0]) { anchorBalance = balanceHistory[bm]; anchorIsSet = true; }
-  });
-  // Fall back to the input field value only if no history exists at all
-  if (!anchorIsSet) {
-    const inputVal = parseFloat(document.getElementById('fc-opening-balance')?.value);
-    if (!isNaN(inputVal)) anchorBalance = inputVal;
-  }
-
-  let cumulative = anchorBalance;
-  rows.forEach((r, ri) => {
-    if (balanceHistory[r.m] !== undefined) {
-      // Recorded actual bank balance — use it directly as the anchor
-      r.cumCash = balanceHistory[r.m];
-      r.cumIsActual = true;
-      r.carryForwardNote = 0;
-      cumulative = balanceHistory[r.m];
-    } else {
-      cumulative += r.cash;
-      r.cumCash = cumulative;
-      r.cumIsActual = false;
-      r.carryForwardNote = 0;
-    }
-  });
-
   if (forecastChartInst) { forecastChartInst.destroy(); forecastChartInst = null; }
-
-  // Adjust chart height for longer periods
   const chartH = allMonths.length > 18 ? 320 : 280;
 
   contentEl.innerHTML = `
@@ -2504,10 +2020,8 @@ function renderForecastSection() {
       <span style="display:flex;align-items:center;gap:5px"><span style="width:12px;height:12px;border-radius:2px;background:rgba(234,88,12,0.75);display:inline-block"></span>Materials</span>
       <span style="display:flex;align-items:center;gap:5px"><span style="width:12px;height:12px;border-radius:2px;background:rgba(202,138,4,0.75);display:inline-block"></span>Overhead</span>
       <span style="display:flex;align-items:center;gap:5px"><span style="width:12px;height:12px;border-radius:2px;background:rgba(109,40,217,0.65);display:inline-block"></span>Liabilities</span>
-      <span style="display:flex;align-items:center;gap:5px"><span style="width:24px;height:2px;background:#1d4ed8;display:inline-block"></span>Monthly cashflow</span>
-      <span style="display:flex;align-items:center;gap:5px"><span style="width:24px;height:2px;background:#7c3aed;border-top:2px dashed #7c3aed;display:inline-block"></span>Closing balance</span>
+      <span style="display:flex;align-items:center;gap:5px"><span style="width:24px;height:2px;background:#1d4ed8;display:inline-block"></span>Working capital</span>
     </div>
-    <div style="font-size:12px;color:#888;margin-bottom:1rem">Labour and overhead paid in month incurred. Materials on 30-day account (paid following month). Income received end of following month. Retention deducted until marked received in the <button onclick="showTab('retentions')" style="background:none;border:none;color:#1d4ed8;cursor:pointer;font-size:12px;padding:0;text-decoration:underline">Retentions tab</button>.</div>
     <div style="position:relative;width:100%;height:${chartH}px;margin-bottom:1.5rem"><canvas id="forecastChart"></canvas></div>
     <div id="ftable"></div>`;
 
@@ -2516,14 +2030,13 @@ function renderForecastSection() {
     data: {
       labels: allMonths.map(monthLabel),
       datasets: [
-        { label: 'Net billing',        data: rows.map(r => Math.round(r.tNetBilling)),    backgroundColor: 'rgba(22,163,74,0.75)',  borderRadius: 3 },
-        { label: 'Retention received', data: rows.map(r => Math.round(r.tRetReceived)),   backgroundColor: 'rgba(15,118,110,0.75)', borderRadius: 3 },
-        { label: 'Labour',             data: rows.map(r => Math.round(r.tL)),             backgroundColor: 'rgba(220,38,38,0.75)',  borderRadius: 3 },
-        { label: 'Materials',          data: rows.map(r => Math.round(r.tM)),             backgroundColor: 'rgba(234,88,12,0.75)',  borderRadius: 3 },
-        { label: 'Overhead',           data: rows.map(r => Math.round(r.tO)),             backgroundColor: 'rgba(202,138,4,0.75)',  borderRadius: 3 },
-        { label: 'Liabilities',        data: rows.map(r => Math.round(r.tLiab)),          backgroundColor: 'rgba(109,40,217,0.65)', borderRadius: 3 },
-        { label: 'Operating cashflow', data: rows.map(r => Math.round(r.cash)),   type: 'line', borderColor: '#1d4ed8', backgroundColor: 'transparent', borderWidth: 2, pointRadius: allMonths.length > 18 ? 2 : 3, tension: 0.3, order: 0 },
-        { label: 'Closing balance',  data: rows.map(r => Math.round(r.cumCash)), type: 'line', borderColor: '#7c3aed', backgroundColor: 'transparent', borderWidth: 2, borderDash: [5,3], pointRadius: allMonths.length > 18 ? 2 : 3, tension: 0.3, order: 0 }
+        { label: 'Net billing',        data: rows.map(r => Math.round(r.tNetBilling)),       backgroundColor: 'rgba(22,163,74,0.75)',  borderRadius: 3 },
+        { label: 'Retention received', data: rows.map(r => Math.round(r.tRetReceived)),       backgroundColor: 'rgba(15,118,110,0.75)', borderRadius: 3 },
+        { label: 'Labour',             data: rows.map(r => -Math.round(r.tL)),                backgroundColor: 'rgba(220,38,38,0.75)',  borderRadius: 3 },
+        { label: 'Materials',          data: rows.map(r => -Math.round(r.tM)),                backgroundColor: 'rgba(234,88,12,0.75)',  borderRadius: 3 },
+        { label: 'Overhead',           data: rows.map(r => -Math.round(r.tO)),                backgroundColor: 'rgba(202,138,4,0.75)',  borderRadius: 3 },
+        { label: 'Liabilities',        data: rows.map(r => -Math.round(r.tLiab)),             backgroundColor: 'rgba(109,40,217,0.65)', borderRadius: 3 },
+        { label: 'Working capital',    data: rows.map(r => Math.round(r.cash)), type: 'line', borderColor: '#1d4ed8', backgroundColor: 'transparent', borderWidth: 2, pointRadius: allMonths.length > 18 ? 2 : 3, tension: 0.3, order: 0 }
       ]
     },
     options: {
@@ -2542,127 +2055,78 @@ function renderForecastSection() {
   const totNet=totGross-totRetHeld;
   const totCash=totNet+totRetRec+totCredRec-totC-totLiab;
 
-  let tbl = `<div style="font-size:11px;color:#888;margin-bottom:.5rem">
-    Total costs = L (labour, this month) + M (materials, prev month) + O (overhead) + Liab (liabilities).
-    Billing = previous month net of retention. Payment terms per job.
+  let fctbl = `<div style="font-size:11px;color:#888;margin-bottom:.5rem">
+    Labour and overhead paid month incurred. Materials on 30-day account. Billing received per payment terms. Retention excluded until invoiced.
   </div>
   <div class="card" style="padding:0;overflow:hidden;margin-top:.25rem">
   <table style="font-size:13px">
   <thead><tr>
     <th>Month</th>
-    <th title="Labour this month + materials from prev month + overhead + liabilities">Total costs</th>
+    <th>Total costs</th>
     <th>Net billing</th>
     <th>Ret. received</th>
     <th>Credits</th>
-    <th>Monthly cash</th>
-    <th style="border-left:2px solid #e8e8e8">Closing balance</th>
+    <th>Working capital</th>
   </tr></thead><tbody>`;
 
   rows.forEach((r, ri) => {
     const cur = getCurrentMonth();
-    const isPreForecast = !forecastMonths.includes(r.m); // history month before job schedule
-    const rowBg = isPreForecast ? 'background:#f0f9ff' : r.m < cur ? 'background:#fafafa' : '';
+    const rowBg = r.m < cur ? 'background:#fafafa' : '';
     const retRecCell = r.tRetReceived > 0 ? `<span style="color:#0f766e;font-weight:600">+${fmt(r.tRetReceived)}</span>` : '<span style="color:#ccc">—</span>';
-    const cumClass = r.cumCash >= 0 ? 'green' : 'red';
-    const cumStyle = r.cumIsActual
-      ? `font-weight:700;border-left:2px solid #e8e8e8;background:#dcfce7;color:#15803d`
-      : `font-weight:600;border-left:2px solid #e8e8e8`;
     const mPrev = prevMonth(r.m);
+    const detailId = `detail-${ri}`;
 
-    // Build per-job detail for this month
     const jobDetails = [];
     jobs.forEach(j => {
       const ms = getMonths(j.start, j.dur);
-      const msPrev = getMonths(j.start, j.dur);
-      const hasThisMonth = ms.includes(r.m);
-      const hasPrevMonth = ms.includes(mPrev);
-      if (!hasThisMonth && !hasPrevMonth) return;
-
-      const jL  = hasThisMonth ? buildSchedule(j,'labour')[r.m].value : 0;
-      const jO  = hasThisMonth ? buildSchedule(j,'overhead')[r.m].value : 0;
-      const jM  = hasPrevMonth ? buildSchedule(j,'materials')[mPrev].value : 0;
+      const hasCur = ms.includes(r.m), hasPrev = ms.includes(mPrev);
+      if (!hasCur && !hasPrev) return;
+      const jL = hasCur ? buildSchedule(j,'labour')[r.m].value : 0;
+      const jO = hasCur ? buildSchedule(j,'overhead')[r.m].value : 0;
+      const jM = hasPrev ? buildSchedule(j,'materials')[mPrev].value : 0;
       const jBillingMonth = j.paymentTerms === 0 ? r.m : (j.paymentTerms >= 2) ? prevMonth(mPrev) : mPrev;
       const prevBil = getJobBillingForMonth(j, jBillingMonth);
-      const jGross = prevBil.gross;
-      const jRet   = prevBil.ret;
-      const jNet   = jGross - jRet;
-      const jCost  = jL + jM + jO;
+      const jGross = prevBil.gross, jRet = prevBil.ret, jNet = jGross - jRet;
+      const jCost = jL + jM + jO;
       if (jCost === 0 && jNet === 0) return;
-
-      // Liability share — apportion equally across active jobs this month
-      const activeJobsThisMonth = jobs.filter(jj => getMonths(jj.start, jj.dur).includes(r.m)).length || 1;
-      const jLiab = r.tLiab / activeJobsThisMonth;
-
-      jobDetails.push({ name: j.name, client: j.client, jL, jM, jO, jGross, jRet, jNet, jLiab, jCost });
+      const activeCount = jobs.filter(jj => getMonths(jj.start, jj.dur).includes(r.m)).length || 1;
+      jobDetails.push({ name: j.name, client: j.client, jL, jM, jO, jGross, jRet, jNet, jCost, jLiab: r.tLiab / activeCount });
     });
 
-    // Liabilities breakdown
     const liabDetails = [];
-    liabilities.forEach(l => {
-      if (getLiabMonths(l).has(r.m)) liabDetails.push({ name: l.name, amount: l.amount });
-    });
+    liabilities.forEach(l => { if (getLiabMonths(l).has(r.m)) liabDetails.push({ name: l.name, amount: l.amount }); });
+    const creditsThisMonth = credits.filter(c => c.received && c.receivedMonth === r.m);
 
-    const detailId = `detail-${ri}`;
-    tbl += `<tr style="${rowBg}" id="row-${ri}">
+    fctbl += `<tr style="${rowBg}" id="row-${ri}">
       <td style="white-space:nowrap">
         <button onclick="toggleDetail('${detailId}','btn-${ri}')" id="btn-${ri}"
-          style="width:22px;height:22px;border:1px solid #ddd;border-radius:4px;background:#fff;cursor:pointer;font-size:12px;margin-right:6px;line-height:1;vertical-align:middle">+</button>${monthLabel(r.m)}${isPreForecast ? ' <span style="font-size:10px;color:#0284c7">history</span>' : ''}
+          style="width:22px;height:22px;border:1px solid #ddd;border-radius:4px;background:#fff;cursor:pointer;font-size:12px;margin-right:6px;line-height:1;vertical-align:middle">+</button>${monthLabel(r.m)}
       </td>
-      <td>
-        <strong>${fmt(r.tC + r.tLiab)}</strong>
-        <div style="font-size:11px;color:#888">L:${fmt(r.tL)} M:${fmt(r.tM)} O:${fmt(r.tO)}${r.tLiab>0?' Liab:'+fmt(r.tLiab):''}</div>
-      </td>
-      <td>
-        <strong>${fmt(r.tNetBilling)}</strong>
-        <div style="font-size:11px;color:#888">Gross:${fmt(r.tGrossBilling)}${r.tRetHeld>0?' Ret:-'+fmt(r.tRetHeld):''}</div>
-      </td>
+      <td><strong>${fmt(r.tC + r.tLiab)}</strong><div style="font-size:11px;color:#888">L:${fmt(r.tL)} M:${fmt(r.tM)} O:${fmt(r.tO)}${r.tLiab>0?' Liab:'+fmt(r.tLiab):''}</div></td>
+      <td><strong>${fmt(r.tNetBilling)}</strong><div style="font-size:11px;color:#888">Gross:${fmt(r.tGrossBilling)}${r.tRetHeld>0?' Ret:-'+fmt(r.tRetHeld):''}</div></td>
       <td>${retRecCell}</td>
       <td>${r.tCreditsReceived > 0 ? `<span style="color:#6d28d9;font-weight:600">+${fmt(r.tCreditsReceived)}</span>` : '<span style="color:#ccc">—</span>'}</td>
       <td class="${r.cash>=0?'green':'red'}"><strong>${r.cash>=0?'+':''}${fmt(r.cash)}</strong></td>
-      <td style="${cumStyle}" class="${r.cumIsActual?'':''+cumClass}">
-        ${r.cumIsActual ? `
-          <div id="bal-display-${ri}" style="cursor:pointer" onclick="editBalanceCell('${r.m}',${ri})" title="Click to edit">
-            ${r.cumCash>=0?'+':''}${fmt(r.cumCash)}
-            <div style="font-size:10px;font-weight:500;color:#15803d">actual ✎</div>
-          </div>
-          <div id="bal-edit-${ri}" style="display:none;align-items:center;gap:4px;flex-wrap:wrap">
-            <input type="number" id="bal-input-${ri}" value="${balanceHistory[r.m]}"
-              style="width:100px;font-size:12px;padding:3px 6px;border:1px solid #86efac;border-radius:4px">
-            <button onclick="saveBalanceCell('${r.m}',${ri})"
-              style="padding:2px 8px;font-size:11px;border:1px solid #86efac;border-radius:4px;background:#dcfce7;color:#15803d;cursor:pointer;font-family:inherit">Save</button>
-            <button onclick="clearBalanceCell('${r.m}',${ri})"
-              style="padding:2px 8px;font-size:11px;border:1px solid #fca5a5;border-radius:4px;background:#fee2e2;color:#dc2626;cursor:pointer;font-family:inherit">Clear</button>
-            <button onclick="cancelBalanceEdit(${ri})"
-              style="padding:2px 8px;font-size:11px;border:1px solid #ddd;border-radius:4px;background:#f5f5f5;color:#888;cursor:pointer;font-family:inherit">✕</button>
-          </div>` :
-          `${r.cumCash>=0?'+':''}${fmt(r.cumCash)}`
-        }
-      </td>
     </tr>`;
 
-    // Detail sub-row (hidden by default)
-    const creditsThisMonth = credits.filter(c => c.received && c.receivedMonth === r.m);
     let detailHtml = `<tr id="${detailId}" style="display:none">
-      <td colspan="7" style="padding:0;border-bottom:1px solid #e8e8e8">
+      <td colspan="6" style="padding:0;border-bottom:1px solid #e8e8e8">
         <div style="background:#f8f8f8;padding:10px 14px 10px 42px">
-          <table style="width:100%;font-size:12px;border-collapse:collapse">
-            <thead><tr style="color:#888">
-              <th style="text-align:left;padding:3px 8px;font-weight:500">Job</th>
-              <th style="text-align:right;padding:3px 8px;font-weight:500">Labour</th>
-              <th style="text-align:right;padding:3px 8px;font-weight:500">Materials</th>
-              <th style="text-align:right;padding:3px 8px;font-weight:500">Overhead</th>
-              <th style="text-align:right;padding:3px 8px;font-weight:500">Gross billing</th>
-              <th style="text-align:right;padding:3px 8px;font-weight:500">Retention</th>
-              <th style="text-align:right;padding:3px 8px;font-weight:500">Net billing</th>
-              <th style="text-align:right;padding:3px 8px;font-weight:500;color:#1d4ed8">Job cashflow</th>
-            </tr></thead><tbody>`;
-
+        <table style="width:100%;font-size:12px;border-collapse:collapse">
+        <thead><tr style="color:#888">
+          <th style="text-align:left;padding:3px 8px;font-weight:500">Job</th>
+          <th style="text-align:right;padding:3px 8px;font-weight:500">Labour</th>
+          <th style="text-align:right;padding:3px 8px;font-weight:500">Materials</th>
+          <th style="text-align:right;padding:3px 8px;font-weight:500">Overhead</th>
+          <th style="text-align:right;padding:3px 8px;font-weight:500">Gross billing</th>
+          <th style="text-align:right;padding:3px 8px;font-weight:500">Retention</th>
+          <th style="text-align:right;padding:3px 8px;font-weight:500">Net billing</th>
+          <th style="text-align:right;padding:3px 8px;font-weight:500;color:#1d4ed8">Job W/C</th>
+        </tr></thead><tbody>`;
     jobDetails.forEach(d => {
       const jCash = d.jNet - d.jCost - d.jLiab;
       detailHtml += `<tr style="border-top:0.5px solid #eee">
-        <td style="padding:4px 8px"><strong>${d.name}</strong>${d.client?`<span style="color:#888;font-weight:400"> — ${d.client}</span>`:''}
-          <div style="font-size:10px;color:#aaa">Labour/overhead: this month &nbsp;|&nbsp; Materials/billing: prev month</div>
-        </td>
+        <td style="padding:4px 8px"><strong>${d.name}</strong>${d.client?` <span style="color:#888">— ${d.client}</span>`:''}  </td>
         <td style="text-align:right;padding:4px 8px">${d.jL>0?fmt(d.jL):'—'}</td>
         <td style="text-align:right;padding:4px 8px">${d.jM>0?fmt(d.jM):'—'}</td>
         <td style="text-align:right;padding:4px 8px">${d.jO>0?fmt(d.jO):'—'}</td>
@@ -2672,42 +2136,38 @@ function renderForecastSection() {
         <td style="text-align:right;padding:4px 8px;font-weight:600" class="${jCash>=0?'green':'red'}">${jCash>=0?'+':''}${fmt(jCash)}</td>
       </tr>`;
     });
-
     if (liabDetails.length) {
       detailHtml += `<tr style="border-top:1px solid #ddd;background:#f0f0f0">
         <td style="padding:4px 8px;font-weight:500;color:#6d28d9" colspan="3">Liabilities this month</td>
         <td colspan="5" style="padding:4px 8px">`;
-      liabDetails.forEach(l => {
-        detailHtml += `<span style="color:#6d28d9;margin-right:12px">${l.name}: ${fmt(l.amount)}</span>`;
-      });
+      liabDetails.forEach(l => { detailHtml += `<span style="color:#6d28d9;margin-right:12px">${l.name}: ${fmt(l.amount)}</span>`; });
       detailHtml += `</td></tr>`;
     }
-
     if (creditsThisMonth.length) {
       detailHtml += `<tr style="border-top:1px solid #ddd;background:#faf5ff">
-        <td style="padding:4px 8px;font-weight:500;color:#6d28d9" colspan="3">Credits received this month</td>
+        <td style="padding:4px 8px;font-weight:500;color:#6d28d9" colspan="3">Credits received</td>
         <td colspan="5" style="padding:4px 8px">`;
-      creditsThisMonth.forEach(c => {
-        detailHtml += `<span style="color:#6d28d9;margin-right:12px">${c.name}: +${fmt(c.amount)}</span>`;
-      });
+      creditsThisMonth.forEach(c => { detailHtml += `<span style="color:#6d28d9;margin-right:12px">${c.name}: +${fmt(c.amount)}</span>`; });
       detailHtml += `</td></tr>`;
     }
-
     detailHtml += `</tbody></table></div></td></tr>`;
-    tbl += detailHtml;
+    fctbl += detailHtml;
   });
 
-  tbl += `<tr style="background:#f0f0f0;font-weight:600">
+  fctbl += `<tr style="background:#f0f0f0;font-weight:600">
     <td>Total</td>
-    <td>${fmt(totC+totLiab)}<div style="font-size:11px;font-weight:400;color:#666">L:${fmt(totL)} M:${fmt(totM)} O:${fmt(totO)}${totLiab>0?' Liab:'+fmt(totLiab):''}</div></td>
-    <td>${fmt(totNet)}<div style="font-size:11px;font-weight:400;color:#666">Gross:${fmt(totGross)} Ret:-${fmt(totRetHeld)}</div></td>
+    <td>${fmt(totC+totLiab)}</td>
+    <td>${fmt(totNet)}</td>
     <td style="color:#0f766e">${totRetRec>0?'+'+fmt(totRetRec):'—'}</td>
     <td style="color:#6d28d9">${totCredRec>0?'+'+fmt(totCredRec):'—'}</td>
     <td class="${totCash>=0?'green':'red'}">${totCash>=0?'+':''}${fmt(totCash)}</td>
-    <td style="border-left:2px solid #e8e8e8"></td>
   </tr>`;
-  document.getElementById('ftable').innerHTML = tbl + '</tbody></table></div>';
-  updateObDisplay();
+  document.getElementById('ftable').innerHTML = fctbl + '</tbody></table></div>';
+}
+
+function getEarliestJobStart() {
+  if (!jobs.length) return getCurrentMonth();
+  return jobs.reduce((earliest, j) => j.start < earliest ? j.start : earliest, jobs[0].start);
 }
 
 function setRetentionInvoiceDate(jobIdx, moiety, dateVal, amountVal) {
@@ -3125,7 +2585,6 @@ function showTab(id) {
   document.querySelectorAll('.tab-btn-actuals').forEach(b => b.style.display = id === 'actuals' ? '' : 'none');
   document.querySelectorAll('.tab-btn-liabilities').forEach(b => b.style.display = id === 'liabilities' ? '' : 'none');
   document.querySelectorAll('.tab-btn-credits').forEach(b => b.style.display = id === 'credits' ? '' : 'none');
-  if (id === 'forecast') checkMonthlyBalancePrompt();
 }
 
 function toggleExistingFields() {
