@@ -744,7 +744,8 @@ function fmt(n) { return '£' + Math.round(n).toLocaleString('en-GB'); }
 function fmtPct(n) { return (Math.round(n * 10) / 10).toFixed(1) + '%'; }
 
 function buildSchedule(job, field) {
-  const months = getMonths(job.start, job.dur);
+  const scheduled = getMonths(job.start, job.dur);
+  const effective = getEffectiveMonths(job);
   const originalTotal = field === 'billing' ? job.contract * (1 - job.retention / 100) : job[field];
   let spentActual = 0;
   const actMonths = new Set();
@@ -757,40 +758,66 @@ function buildSchedule(job, field) {
       }
     });
   }
-  months.forEach(m => {
+  scheduled.forEach(m => {
     const a = job.actuals[m] && job.actuals[m][field] !== undefined ? job.actuals[m][field] : null;
     if (a !== null) { spentActual += a; actMonths.add(m); }
   });
   const remaining = Math.max(0, originalTotal - spentActual);
-  const remainingMonths = months.filter(m => !actMonths.has(m));
-
-  // If job is marked complete, zero out remaining cost forecast (not billing — still track outstanding)
+  const remainingMonths = effective.filter(m => !actMonths.has(m));
   const isComplete = job.status === 'complete';
   const reforecastPM = remainingMonths.length > 0 ? remaining / remainingMonths.length : 0;
   const hasActuals = actMonths.size > 0 || hasPreStartDeposit;
   const result = {};
-  months.forEach(m => {
+  effective.forEach(m => {
     const a = job.actuals[m] && job.actuals[m][field] !== undefined ? job.actuals[m][field] : null;
     if (a !== null) {
       result[m] = { value: a, type: 'actual' };
     } else if (isComplete && field !== 'billing') {
-      // Complete job — no more cost forecast for non-actual months
       result[m] = { value: 0, type: 'complete' };
     } else if (hasActuals) {
       result[m] = { value: reforecastPM, type: 'reforecast' };
     } else {
-      result[m] = { value: originalTotal / job.dur, type: 'original' };
+      result[m] = { value: originalTotal / effective.length, type: 'original' };
     }
   });
   return result;
 }
 
 function getSummary(job, field) {
-  const months = getMonths(job.start, job.dur);
+  const sched = buildSchedule(job, field);
+  const originalTotal = field === 'billing' ? job.contract * (1 - job.retention / 100) : job[field];
+  let actualSpent = 0;
+  Object.keys(sched).forEach(m => { if (sched[m].type === 'actual') actualSpent += sched[m].value; });
+  return { originalTotal, actualSpent, balance: Math.max(0, originalTotal - actualSpent), overrun: Math.max(0, actualSpent - originalTotal) };
+}
+
+// Returns scheduled months extended by 1 if job is not complete and has remaining balances
+// Calculates balance directly (not via getSummary) to avoid circular dependency
+function getEffectiveMonths(job) {
+  const scheduled = getMonths(job.start, job.dur);
+  if (job.status === 'complete') return scheduled;
+  const cur = getCurrentMonth();
+  const lastMonth = scheduled[scheduled.length - 1];
+  if (lastMonth >= cur) return scheduled;
+  // Check if any field has remaining balance vs scheduled actuals
+  const fields = ['billing', 'labour', 'materials', 'overhead'];
+  const hasBalance = fields.some(field => {
+    const total = field === 'billing' ? job.contract * (1 - job.retention / 100) : job[field];
+    let spent = 0;
+    scheduled.forEach(m => {
+      const a = job.actuals[m] && job.actuals[m][field] !== undefined ? job.actuals[m][field] : null;
+      if (a !== null) spent += a;
+    });
+    return (total - spent) > 0.5;
+  });
+  return hasBalance ? [...scheduled, addMonths(lastMonth, 1)] : scheduled;
+}
+
+function getSummary(job, field) {
   const originalTotal = field === 'billing' ? job.contract * (1 - job.retention / 100) : job[field];
   const sched = buildSchedule(job, field);
   let actualSpent = 0;
-  months.forEach(m => { if (sched[m].type === 'actual') actualSpent += sched[m].value; });
+  Object.keys(sched).forEach(m => { if (sched[m].type === 'actual') actualSpent += sched[m].value; });
   return { originalTotal, actualSpent, balance: Math.max(0, originalTotal - actualSpent), overrun: Math.max(0, actualSpent - originalTotal) };
 }
 
@@ -1186,29 +1213,44 @@ function renderSummary() {
   </div>`;
 
   // Jobs at risk
-  html += `<div style="font-size:12px;font-weight:600;color:#888;text-transform:uppercase;letter-spacing:.05em;margin-bottom:.5rem">Jobs at risk</div>
-  <div style="font-size:12px;color:#888;margin-bottom:.75rem">
-    Flags: billing outstanding past end date; billing complete with costs still forecast; costs &gt;5% over prorated forecast; billing &gt;10% behind prorated forecast; actual margin below 15%.
-  </div>`;
+  html += `<div style="font-size:12px;font-weight:600;color:#888;text-transform:uppercase;letter-spacing:.05em;margin-bottom:.5rem">Jobs at risk</div>`;
   if (!atRisk.length) {
     html += `<div class="card" style="padding:1rem 1.25rem;margin-bottom:1.5rem;color:#16a34a;font-size:13px">✓ All active jobs are tracking within forecast — no issues detected.</div>`;
   } else {
-    html += `<div class="card" style="padding:0;overflow:hidden;margin-bottom:1.5rem"><table style="font-size:13px"><thead><tr><th>Job ref</th><th>Client</th><th>Risk</th><th>Severity</th><th></th></tr></thead><tbody>`;
-    atRisk.forEach(({ j, risks }, ji) => {
-      risks.forEach((r, ri) => {
-        const sevColour = r.severity === 'high' ? '#fef2f2' : '#fefce8';
-        const sevBadge  = r.severity === 'high'
+    // Group by risk type
+    const categories = [
+      { key: 'billing-overrun', label: 'Billing outstanding past end date', icon: '🔴' },
+      { key: 'costs-after-billing', label: 'Billing complete — costs still forecast', icon: '🟡' },
+      { key: 'cost', label: 'Cost overrun vs forecast', icon: '🔴' },
+      { key: 'billing', label: 'Billing behind forecast', icon: '🟡' },
+      { key: 'margin', label: 'Margin below threshold', icon: '🟡' },
+    ];
+    categories.forEach(cat => {
+      const items = [];
+      atRisk.forEach(({ j, risks }) => {
+        risks.filter(r => r.type === cat.key).forEach(r => {
+          items.push({ j, r });
+        });
+      });
+      if (!items.length) return;
+      html += `<div style="font-size:12px;font-weight:600;color:#555;margin:.75rem 0 .35rem">${cat.icon} ${cat.label}</div>
+      <div class="card" style="padding:0;overflow:hidden;margin-bottom:.75rem">
+      <table style="font-size:13px"><thead><tr><th>Job ref</th><th>Client</th><th>Detail</th><th>Severity</th><th></th></tr></thead><tbody>`;
+      items.forEach(({ j, r }) => {
+        const sevBadge = r.severity === 'high'
           ? '<span style="background:#fee2e2;color:#dc2626;padding:2px 8px;border-radius:8px;font-size:11px">High</span>'
           : '<span style="background:#fef9c3;color:#a16207;padding:2px 8px;border-radius:8px;font-size:11px">Medium</span>';
-        html += `<tr style="background:${sevColour};border-bottom:1px solid #f0f0f0">
-          ${ri === 0 ? '<td rowspan="'+risks.length+'" style="font-weight:500;border-right:1px solid #f0f0f0">'+j.name+'</td><td rowspan="'+risks.length+'" style="border-right:1px solid #f0f0f0">'+(j.client||'—')+'</td>' : ''}
+        html += `<tr style="background:${r.severity==='high'?'#fef2f2':'#fefce8'};border-bottom:1px solid #f0f0f0">
+          <td style="font-weight:500">${j.name}</td>
+          <td>${j.client||'—'}</td>
           <td>${r.label}</td>
           <td>${sevBadge}</td>
-          <td><button class="btn btn-sm" onclick="showTab('actuals');setActualsJob(${jobs.indexOf(j)})">View actuals</button></td>
+          <td><button class="btn btn-sm" onclick="showTab('actuals');setActualsJob(${jobs.indexOf(j)})">View</button></td>
         </tr>`;
       });
+      html += '</tbody></table></div>';
     });
-    html += '</tbody></table></div>';
+    html += '<div style="margin-bottom:.75rem"></div>';
   }
 
   // Upcoming
@@ -1808,7 +1850,7 @@ function renderActualsSection() {
   const el = document.getElementById('actuals');
   if (!jobs.length) { el.innerHTML = '<div class="empty-state">No jobs yet.</div>'; return; }
   const j = jobs[activeActualsJob]; if (!j) return;
-  const months = getMonths(j.start, j.dur), cur = getCurrentMonth();
+  const months = getEffectiveMonths(j), cur = getCurrentMonth();
   const fields = ['labour', 'materials', 'overhead', 'billing'];
   const scheds = {}; fields.forEach(f => { scheds[f] = buildSchedule(j, f); });
 
@@ -1996,7 +2038,7 @@ function getForecastMonths() {
     if (!jobs.length) return [];
     let earliest = null, latest = null;
     jobs.forEach(j => {
-      const ms = getMonths(j.start, j.dur);
+      const ms = getEffectiveMonths(j);
       if (!earliest || ms[0] < earliest) earliest = ms[0];
       const lagMonths = j.paymentTerms === 0 ? 0 : (j.paymentTerms >= 2) ? 2 : 1;
       const extendedEnd = addMonths(ms[ms.length - 1], lagMonths);
@@ -2093,12 +2135,12 @@ function renderForecastSection() {
     const mPrev2 = prevMonth(mPrev);
     let tL=0, tM=0, tO=0, tGrossBilling=0, tRetHeld=0;
     jobs.forEach(j => {
-      const ms = getMonths(j.start, j.dur);
+      const ms = getEffectiveMonths(j);
       if (ms.includes(m)) {
-        tL += buildSchedule(j,'labour')[m].value;
-        tO += buildSchedule(j,'overhead')[m].value;
+        tL += buildSchedule(j,'labour')[m]?.value || 0;
+        tO += buildSchedule(j,'overhead')[m]?.value || 0;
       }
-      if (ms.includes(mPrev)) tM += buildSchedule(j,'materials')[mPrev].value;
+      if (ms.includes(mPrev)) tM += buildSchedule(j,'materials')[mPrev]?.value || 0;
       const billingMonth = j.paymentTerms === 0 ? m : (j.paymentTerms >= 2) ? mPrev2 : mPrev;
       const prevBilling = getJobBillingForMonth(j, billingMonth);
       tGrossBilling += prevBilling.gross;
