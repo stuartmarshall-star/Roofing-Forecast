@@ -2775,29 +2775,38 @@ function editJob(idx) {
   document.getElementById('f-moiety').value = String(j.moiety || 12);
   document.getElementById('f-payment-terms').value = String(j.paymentTerms || 1);
 
-  // Check if this job is auto-extended due to unallocated balance
+  // When a job has ended with remaining balance, prevent DECREASING duration (would lose the auto-extended month)
+  // but ALLOW increasing it (to add back a month or extend further)
   const cur = getCurrentMonth();
   const scheduled = getMonths(j.start, j.dur);
   const lastScheduled = scheduled[scheduled.length - 1];
-  const isAutoExtended = j.status !== 'complete' && lastScheduled < cur &&
-    getEffectiveMonths(j).length > scheduled.length;
+  const effectiveMths = getEffectiveMonths(j);
+  // Job needs guarding if: active, ended, and effective months extend beyond scheduled
+  const needsGuard = j.status !== 'complete'
+    && lastScheduled < cur
+    && effectiveMths.length > scheduled.length;
+  // We don't fully disable — instead we set a minimum value and warn
+  const isAutoExtended = needsGuard;
 
   // Lock duration if auto-extended — must be reviewed before reducing
   const durEl = document.getElementById('f-dur');
   const durLockEl = document.getElementById('f-dur-lock');
   if (isAutoExtended) {
-    durEl.disabled = true;
-    durEl.style.background = '#f3f4f6';
-    durEl.style.color = '#9ca3af';
+    // Allow increasing but not decreasing below current value
+    durEl.disabled = false;
+    durEl.min = j.dur;
+    durEl.style.background = '';
+    durEl.style.color = '';
     if (durLockEl) {
       durLockEl.style.display = 'block';
       durLockEl.innerHTML = '<div style="background:#fef3c7;border:1px solid #fcd34d;border-radius:6px;padding:7px 12px;font-size:12px;color:#92400e;margin-top:4px">'
-        + '🔒 Duration locked — this job has unallocated balance remaining past its end date. '
-        + 'Mark it <strong>Complete</strong> in the actuals tab, or increase the duration to account for the remaining work.'
+        + '⚠ This job has unallocated balance — duration cannot be reduced below ' + j.dur + ' months. '
+        + 'You can increase it. To close the job, use <strong>Mark complete</strong> in the actuals tab.'
         + '</div>';
     }
   } else {
     durEl.disabled = false;
+    durEl.min = 1;
     durEl.style.background = '';
     durEl.style.color = '';
     if (durLockEl) durLockEl.style.display = 'none';
@@ -2846,7 +2855,7 @@ function editJob(idx) {
 function closeModal() {
   document.getElementById('modal-backdrop').classList.remove('open');
   const durEl = document.getElementById('f-dur');
-  durEl.disabled = false; durEl.style.background = ''; durEl.style.color = '';
+  durEl.disabled = false; durEl.min = 1; durEl.style.background = ''; durEl.style.color = '';
   const durLockEl = document.getElementById('f-dur-lock');
   if (durLockEl) durLockEl.style.display = 'none';
 }
@@ -2858,8 +2867,13 @@ async function saveJob() {
   const isExisting = document.getElementById('f-existing').checked;
   const startVal = parseMonthInput(document.getElementById('f-start').value);
   const durEl = document.getElementById('f-dur');
-  // If duration is locked (auto-extended job), keep existing duration
-  const durVal = durEl.disabled && editIdx !== null ? jobs[editIdx].dur : (parseInt(durEl.value) || 1);
+  let durVal = parseInt(durEl.value) || 1;
+  // Enforce minimum if guarded
+  const minDur = parseInt(durEl.min) || 1;
+  if (durVal < minDur) {
+    alert('Duration cannot be reduced below ' + minDur + ' months while this job has an unallocated balance.');
+    return;
+  }
   const retPct = parseFloat(document.getElementById('f-retention').value) || 0;
 
   // Build actuals — preserve any individually-entered actuals; only backfill if checkbox ticked
