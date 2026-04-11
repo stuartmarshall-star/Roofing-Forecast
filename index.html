@@ -1858,15 +1858,13 @@ async function markJobComplete(idx) {
   const j = jobs[idx];
   const cur = getCurrentMonth();
   const effectiveMths = getEffectiveMonths(j);
-  const closedMonths = effectiveMths.filter(m => m < cur);
+  // Include current month — that's where final costs and billing sit
+  const closedMonths = effectiveMths.filter(m => m <= cur);
   const finalMonth = closedMonths[closedMonths.length - 1];
-
-  console.log('markJobComplete:', j.name, 'cur:', cur, 'finalMonth:', finalMonth, 'effectiveMths:', effectiveMths);
 
   if (finalMonth) {
     const existing = j.actuals[finalMonth] || {};
     const hasAllActuals = ['labour','materials','overhead','billing'].every(f => existing[f] !== undefined);
-    console.log('hasAllActuals:', hasAllActuals, 'existing:', existing);
 
     if (!hasAllActuals) {
       _completeJobIdx = idx;
