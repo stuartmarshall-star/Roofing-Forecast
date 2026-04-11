@@ -1833,7 +1833,6 @@ async function markJobComplete(idx) {
   const j = jobs[idx];
   const cur = getCurrentMonth();
   const effectiveMths = getEffectiveMonths(j);
-  // The "final" month to enter actuals for — last effective month that is before or equal to current
   const closedMonths = effectiveMths.filter(m => m < cur);
   const finalMonth = closedMonths[closedMonths.length - 1];
 
@@ -1842,39 +1841,61 @@ async function markJobComplete(idx) {
     const hasAllActuals = ['labour','materials','overhead','billing'].every(f => existing[f] !== undefined);
 
     if (!hasAllActuals) {
-      // Show a small inline form in the confirm dialog to capture final actuals
-      const curL   = existing.labour    !== undefined ? existing.labour    : '';
-      const curM   = existing.materials !== undefined ? existing.materials : '';
-      const curO   = existing.overhead  !== undefined ? existing.overhead  : '';
-      const curB   = existing.billing   !== undefined ? existing.billing   : '';
+      // Highlight the final month row and show a completion prompt above the table
+      const el = document.getElementById('actuals');
+      // Insert a banner above the table asking user to fill in final month
+      const banner = document.createElement('div');
+      banner.id = 'complete-banner';
+      banner.style.cssText = 'background:#fef3c7;border:1px solid #fcd34d;border-radius:8px;padding:12px 16px;margin-bottom:1rem;font-size:13px;color:#92400e';
+      banner.innerHTML = '<strong>⚠ Final actuals required for ' + monthLabel(finalMonth) + '</strong><br>'
+        + 'Enter the final Labour, Materials, Overhead, and Billing figures below (enter 0 for nil), then click <strong>Confirm &amp; complete</strong>.'
+        + '<div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">'
+        + '<button class="btn btn-sm" style="background:#f0fdf4;border-color:#86efac;color:#15803d" id="confirm-complete-btn" onclick="confirmComplete(' + idx + ',\'' + finalMonth + '\')">Confirm &amp; complete</button>'
+        + '<button class="btn btn-sm" onclick="document.getElementById(\'complete-banner\').remove()">Cancel</button>'
+        + '</div>';
 
-      const answer = prompt(
-        'Before marking "' + j.name + '" complete, please confirm the final actuals for ' + monthLabel(finalMonth) + '.\n\n' +
-        'Enter values as: Labour, Materials, Overhead, Billing (comma separated)\n' +
-        'Enter 0 for any that are nil. Leave blank to skip and complete anyway.\n\n' +
-        'Current values: ' + [curL||'—', curM||'—', curO||'—', curB||'—'].join(', '),
-        [curL, curM, curO, curB].join(', ')
-      );
+      // Insert after pills, before job header
+      const existingBanner = document.getElementById('complete-banner');
+      if (existingBanner) existingBanner.remove();
+      el.insertBefore(banner, el.firstChild);
 
-      if (answer === null) return; // cancelled
-
-      if (answer.trim() !== '') {
-        const parts = answer.split(',').map(s => parseFloat(s.trim()));
-        if (parts.length === 4 && parts.every(p => !isNaN(p))) {
-          if (!j.actuals[finalMonth]) j.actuals[finalMonth] = {};
-          j.actuals[finalMonth].labour    = parts[0];
-          j.actuals[finalMonth].materials = parts[1];
-          j.actuals[finalMonth].overhead  = parts[2];
-          j.actuals[finalMonth].billing   = parts[3];
-        } else if (answer.trim() !== '') {
-          alert('Could not parse values — please enter four numbers separated by commas, e.g. 1200, 450, 0, 5000');
-          return;
-        }
-      }
+      // Scroll to and highlight the final month row in the table
+      // Find the row by looking for the month label text
+      setTimeout(() => {
+        const rows = el.querySelectorAll('table tr');
+        rows.forEach(row => {
+          if (row.textContent.includes(monthLabel(finalMonth))) {
+            row.style.outline = '2px solid #f59e0b';
+            row.style.background = '#fffbeb';
+            row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          }
+        });
+      }, 100);
+      return;
     }
   }
 
   if (!confirm('Mark "' + j.name + '" as complete? Remaining cost forecast will be removed. Billing balance stays until invoiced. Click "Undo complete" to reverse.')) return;
+  j.status = 'complete';
+  renderAll();
+  await dbSave(j);
+}
+
+async function confirmComplete(idx, finalMonth) {
+  const j = jobs[idx];
+  const existing = j.actuals[finalMonth] || {};
+  const hasAllActuals = ['labour','materials','overhead','billing'].every(f => existing[f] !== undefined);
+
+  if (!hasAllActuals) {
+    // Check which fields are still missing
+    const missing = ['labour','materials','overhead','billing'].filter(f => existing[f] === undefined);
+    alert('Please enter values for: ' + missing.join(', ') + ' in ' + monthLabel(finalMonth) + ' before completing.\n\nEnter 0 if there is nothing to record.');
+    return;
+  }
+
+  const banner = document.getElementById('complete-banner');
+  if (banner) banner.remove();
+
   j.status = 'complete';
   renderAll();
   await dbSave(j);
