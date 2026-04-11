@@ -1831,8 +1831,16 @@ function setActualsJob(idx) { activeActualsJob = idx; renderActualsSection(); }
 
 async function markJobComplete(idx) {
   const j = jobs[idx];
-  if (!confirm('Mark "' + j.name + '" as complete? This will remove remaining cost forecast from future months. Billing balance will still show until invoiced. You can undo by editing the job and setting status back to Active.')) return;
+  if (!confirm('Mark "' + j.name + '" as complete? This will remove remaining cost forecast from future months. Billing balance will still show until invoiced. You can undo by clicking "Undo complete" in the actuals tab.')) return;
   j.status = 'complete';
+  renderAll();
+  await dbSave(j);
+}
+
+async function undoJobComplete(idx) {
+  const j = jobs[idx];
+  if (!confirm('Set "' + j.name + '" back to Active? Remaining cost forecast will be restored based on unspent budgets.')) return;
+  j.status = 'active';
   renderAll();
   await dbSave(j);
 }
@@ -1876,7 +1884,7 @@ function renderActualsSection() {
     + '<div style="display:flex;gap:8px;flex-wrap:wrap">'
     + '<button class="btn btn-sm" onclick="editJob(' + activeActualsJob + ')">Edit job details</button>'
     + (j.status === 'active' ? '<button class="btn btn-sm" style="background:#f0fdf4;border-color:#86efac;color:#15803d" onclick="markJobComplete(' + activeActualsJob + ')">✓ Mark complete</button>' : '')
-    + (j.status === 'complete' ? '<span style="background:#f0fdf4;border:1px solid #86efac;color:#15803d;padding:4px 10px;border-radius:6px;font-size:12px;font-weight:500">✓ Complete</span>' : '')
+    + (j.status === 'complete' ? '<span style="background:#f0fdf4;border:1px solid #86efac;color:#15803d;padding:4px 10px;border-radius:6px;font-size:12px;font-weight:500">✓ Complete</span> <button class="btn btn-sm" style="background:#fef9c3;border-color:#fde68a;color:#a16207" onclick="undoJobComplete(' + activeActualsJob + ')">Undo complete</button>' : '')
     + '</div></div>';
 
   // Health banners
