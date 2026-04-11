@@ -139,7 +139,7 @@
     </div>
     <div class="pin-error" id="pin-error"></div>
     <div class="pin-hint">Share this PIN with your accountant</div>
-    <div style="margin-top:1.5rem;font-size:10px;color:#bbb;font-family:monospace">v2.15-Apr-25-18:15</div>
+    <div style="margin-top:1.5rem;font-size:10px;color:#bbb;font-family:monospace">v2.16-Apr-25-18:30</div>
   </div>
 </div>
 
@@ -160,7 +160,7 @@
     </div>
     <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
       <span class="saving" id="saving-indicator"></span>
-      <span style="font-size:10px;color:#bbb;font-family:monospace;user-select:none" title="Build version">v2.15-Apr-25-18:15</span>
+      <span style="font-size:10px;color:#bbb;font-family:monospace;user-select:none" title="Build version">v2.16-Apr-25-18:30</span>
       <button id="btn-job-template" class="btn tab-btn-jobs" style="display:none" onclick="downloadCsvTemplate()">⬇ Job template</button>
       <button id="btn-import-jobs" class="btn tab-btn-jobs" style="display:none" onclick="document.getElementById('csv-file-input').click()">⬆ Import jobs</button>
       <button id="btn-actuals-template" class="btn tab-btn-actuals" style="display:none" onclick="downloadActualsTemplate()">⬇ Actuals template</button>
@@ -2001,27 +2001,60 @@ function renderActualsSection() {
       + '</div>';
   }
 
+  // Billing recovery banner — check if billing is behind costs
+  const elapsedForBanner = months.filter(m => m < cur);
+  if (elapsedForBanner.length) {
+    let actCostBanner = 0, actBilBanner = 0;
+    elapsedForBanner.forEach(m => { const a = j.actuals[m]; if (a) { actCostBanner += (a.labour||0)+(a.materials||0)+(a.overhead||0); actBilBanner += a.billing||0; } });
+    if (actCostBanner > 0 && (actCostBanner - actBilBanner) > actCostBanner * 0.1) {
+      const shortfall = actCostBanner - actBilBanner;
+      const remainingMonths = Math.max(1, j.dur - elapsedForBanner.length);
+      const remainingContract = Math.max(0, j.contract * (1 - j.retention / 100) - actBilBanner);
+      const catchUpMonths = Math.min(2, remainingMonths);
+      const normalMonthly = remainingContract / remainingMonths;
+      const suggestedApp = normalMonthly + (shortfall / catchUpMonths);
+      banners += '<div style="background:#eff6ff;border:1px solid #93c5fd;border-radius:8px;padding:10px 14px;margin-bottom:1rem;font-size:12px;color:#1d4ed8">'
+        + '<strong>📋 Billing behind costs:</strong> You have received ' + fmt(actBilBanner) + ' against ' + fmt(actCostBanner) + ' costs incurred — shortfall of ' + fmt(shortfall) + '.<br>'
+        + '<span style="color:#15803d;font-weight:600">→ Suggested next application: ' + fmt(Math.max(0, suggestedApp)) + '</span>'
+        + ' <span style="color:#888;font-weight:400">(normal ' + fmt(normalMonthly) + ' + ' + fmt(shortfall / catchUpMonths) + ' catch-up over ' + catchUpMonths + ' month' + (catchUpMonths > 1 ? 's' : '') + ')</span>'
+        + '</div>';
+    }
+  }
+
   // Balance strip
   let bal = '<div class="balance-strip">';
   ['labour', 'materials', 'overhead'].forEach(f => {
-    const s = getSummary(j, f), pct = s.originalTotal > 0 ? Math.round(s.actualSpent / s.originalTotal * 100) : 0;
+    const s = getSummary(j, f);
+    const pct = s.originalTotal > 0 ? Math.round(s.actualSpent / s.originalTotal * 100) : 0;
+    const barCol = pct > 100 ? '#dc2626' : pct > 85 ? '#d97706' : '#16a34a';
     const lbl = { labour: 'Labour', materials: 'Materials', overhead: 'Overhead' }[f];
     bal += '<div class="balance-box">'
       + '<div class="balance-box-label">' + lbl + ' \u2014 budget</div>'
       + '<div class="balance-box-val">' + fmt(s.originalTotal) + '</div>'
-      + '<div style="font-size:11px;color:#888;margin-top:2px"><span style="color:#16a34a">Actual spent: ' + fmt(s.actualSpent) + '</span> &nbsp;|&nbsp; Remaining: ' + fmt(s.balance) + '</div>'
-      + '<div class="progress-bar-wrap" style="margin-top:6px"><div class="progress-bar" style="width:' + Math.min(pct,100) + '%;background:#16a34a"></div></div>'
+      + '<div style="font-size:11px;color:#888;margin-top:2px">'
+      + '<span style="color:#16a34a">Actual: ' + fmt(s.actualSpent) + '</span>'
+      + ' &nbsp;|&nbsp; Remaining: ' + fmt(s.balance)
+      + ' &nbsp;|&nbsp; <strong style="color:' + barCol + '">' + pct + '%</strong>'
+      + '</div>'
+      + '<div class="progress-bar-wrap" style="margin-top:6px"><div class="progress-bar" style="width:' + Math.min(pct,100) + '%;background:' + barCol + '"></div></div>'
       + '</div>';
   });
   bal += '</div>';
 
-  const bs = getSummary(j, 'billing'), bpct = bs.originalTotal > 0 ? Math.round(bs.actualSpent / bs.originalTotal * 100) : 0;
+  const bs = getSummary(j, 'billing');
+  const bpct = bs.originalTotal > 0 ? Math.round(bs.actualSpent / bs.originalTotal * 100) : 0;
+  const bBarCol = bpct >= 100 ? '#16a34a' : bpct >= 85 ? '#d97706' : '#1d4ed8';
   bal += '<div class="balance-strip">'
     + '<div class="balance-box" style="grid-column:span 2">'
     + '<div class="balance-box-label">Billing received (excl. retention) \u2014 contract ' + fmt(j.contract) + ', retention ' + j.retention + '%</div>'
     + '<div class="balance-box-val">' + fmt(bs.originalTotal) + '</div>'
-    + '<div style="font-size:11px;color:#888;margin-top:2px"><span style="color:#16a34a">Received: ' + fmt(bs.actualSpent) + '</span> &nbsp;|&nbsp; Still to bill: ' + fmt(bs.balance) + ' &nbsp;|&nbsp; Retention: ' + fmt(j.contract * j.retention / 100) + '</div>'
-    + '<div class="progress-bar-wrap" style="margin-top:6px"><div class="progress-bar" style="width:' + Math.min(bpct,100) + '%;background:#1d4ed8"></div></div>'
+    + '<div style="font-size:11px;color:#888;margin-top:2px">'
+    + '<span style="color:#16a34a">Received: ' + fmt(bs.actualSpent) + '</span>'
+    + ' &nbsp;|&nbsp; Still to bill: ' + fmt(bs.balance)
+    + ' &nbsp;|&nbsp; Retention held: ' + fmt(j.contract * j.retention / 100)
+    + ' &nbsp;|&nbsp; <strong style="color:' + bBarCol + '">' + bpct + '%</strong>'
+    + '</div>'
+    + '<div class="progress-bar-wrap" style="margin-top:6px"><div class="progress-bar" style="width:' + Math.min(bpct,100) + '%;background:' + bBarCol + '"></div></div>'
     + '</div>'
     + '<div class="balance-box">'
     + '<div class="balance-box-label">Total cost remaining</div>'
