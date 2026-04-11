@@ -139,6 +139,7 @@
     </div>
     <div class="pin-error" id="pin-error"></div>
     <div class="pin-hint">Share this PIN with your accountant</div>
+    <div style="margin-top:1.5rem;font-size:10px;color:#bbb;font-family:monospace">v2.15-Apr-25-18:15</div>
   </div>
 </div>
 
@@ -159,7 +160,7 @@
     </div>
     <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
       <span class="saving" id="saving-indicator"></span>
-      <span style="font-size:10px;color:#bbb;font-family:monospace;user-select:none" title="Build version">v2.14-Apr-25-18:00</span>
+      <span style="font-size:10px;color:#bbb;font-family:monospace;user-select:none" title="Build version">v2.15-Apr-25-18:15</span>
       <button id="btn-job-template" class="btn tab-btn-jobs" style="display:none" onclick="downloadCsvTemplate()">⬇ Job template</button>
       <button id="btn-import-jobs" class="btn tab-btn-jobs" style="display:none" onclick="document.getElementById('csv-file-input').click()">⬆ Import jobs</button>
       <button id="btn-actuals-template" class="btn tab-btn-actuals" style="display:none" onclick="downloadActualsTemplate()">⬇ Actuals template</button>
@@ -1207,24 +1208,19 @@ function renderSummary() {
       if (billingBehind > fcBil * 0.1)  risks.push({ type: 'billing', label: 'Billing ' + fmt(billingBehind) + ' behind prorated forecast', severity: billingBehind > fcBil * 0.2 ? 'high' : 'medium' });
 
       // ── Billing recovery check ───────────────────────────────────────────────
-      // Compare actual billing to actual costs — if billing is behind costs, cash flow is at risk
-      // regardless of overall margin. Suggest a catch-up application.
       const billingVsCost = actBil - actCost;
       if (actCost > 0 && billingVsCost < -(actCost * 0.1)) {
-        // How far behind: costs incurred vs billing received
         const shortfall = actCost - actBil;
-        // Remaining months and remaining contract value
-        const remainingMonths = j.dur - n;
-        const remainingContract = j.contract * (1 - j.retention / 100) - actBil;
-        // Suggested next application: normal monthly rate + spread shortfall over min(2, remaining) months
-        const catchUpMonths = Math.max(1, Math.min(2, remainingMonths));
-        const normalMonthly = remainingMonths > 0 ? remainingContract / remainingMonths : remainingContract;
+        const remainingMonths = Math.max(1, j.dur - n);
+        const remainingContract = Math.max(0, j.contract * (1 - j.retention / 100) - actBil);
+        const catchUpMonths = Math.min(2, remainingMonths);
+        const normalMonthly = remainingContract / remainingMonths;
         const suggestedApp = normalMonthly + (shortfall / catchUpMonths);
         const severity = shortfall > actCost * 0.25 ? 'high' : 'medium';
         risks.push({
           type: 'margin',
-          label: 'Billing ' + fmt(shortfall) + ' behind costs to date — consider front-loading next application.'
-            + (remainingMonths > 0 ? ' Suggested next bill: ' + fmt(Math.max(0, suggestedApp)) + ' (normal ' + fmt(normalMonthly) + ' + ' + fmt(shortfall / catchUpMonths) + ' catch-up).' : ''),
+          label: 'Billing ' + fmt(shortfall) + ' behind costs to date — consider front-loading next application',
+          suggestion: 'Suggested next bill: ' + fmt(Math.max(0, suggestedApp)) + ' (normal ' + fmt(normalMonthly) + ' + ' + fmt(shortfall / catchUpMonths) + ' catch-up over ' + catchUpMonths + ' month' + (catchUpMonths > 1 ? 's' : '') + ')',
           severity
         });
       }
@@ -1287,7 +1283,7 @@ function renderSummary() {
           <td style="font-weight:500">${j.name}</td>
           <td style="color:#888;font-size:12px">${j.projectName||'—'}</td>
           <td>${j.client||'—'}</td>
-          <td>${r.label}</td>
+          <td>${r.label}${r.suggestion ? '<div style="font-size:11px;color:#15803d;margin-top:3px;font-weight:500">→ ' + r.suggestion + '</div>' : ''}</td>
           <td>${sevBadge}</td>
           <td><button class="btn btn-sm" onclick="showTab('actuals');setActualsJob(${jobs.indexOf(j)})">View</button></td>
         </tr>`;
