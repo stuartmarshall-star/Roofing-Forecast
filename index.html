@@ -382,6 +382,27 @@
   </div>
 </div>
 
+<!-- Complete Job Modal -->
+<div class="modal-backdrop" id="complete-modal-backdrop">
+  <div class="modal" style="max-width:480px">
+    <div class="modal-title">Complete job — final actuals</div>
+    <div style="font-size:13px;color:#555;margin-bottom:1rem" id="complete-modal-desc"></div>
+    <div style="background:#fef9c3;border:1px solid #fde68a;border-radius:8px;padding:10px 14px;margin-bottom:1rem;font-size:12px;color:#a16207">
+      Enter the final figures for the last month. Enter <strong>0</strong> for anything that is nil — all four fields are required.
+    </div>
+    <div class="form-grid">
+      <div><label>Labour (£)</label><input type="number" id="cm-labour" placeholder="0" min="0"></div>
+      <div><label>Materials (£)</label><input type="number" id="cm-materials" placeholder="0" min="0"></div>
+      <div><label>Overhead (£)</label><input type="number" id="cm-overhead" placeholder="0" min="0"></div>
+      <div><label>Billing received (£)</label><input type="number" id="cm-billing" placeholder="0" min="0"></div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn" onclick="document.getElementById('complete-modal-backdrop').classList.remove('open')">Cancel</button>
+      <button class="btn btn-primary" onclick="submitComplete()" style="background:#15803d;border-color:#15803d">Confirm &amp; complete</button>
+    </div>
+  </div>
+</div>
+
 <script>
 // ── PIN lock ─────────────────────────────────────────────────────────────────
 // To change the PIN, update this value (must be 4 digits)
@@ -1829,6 +1850,9 @@ async function confirmActualsImport() {
 
 function setActualsJob(idx) { activeActualsJob = idx; renderActualsSection(); }
 
+let _completeJobIdx = null;
+let _completeFinalMonth = null;
+
 async function markJobComplete(idx) {
   const j = jobs[idx];
   const cur = getCurrentMonth();
@@ -1841,64 +1865,56 @@ async function markJobComplete(idx) {
     const hasAllActuals = ['labour','materials','overhead','billing'].every(f => existing[f] !== undefined);
 
     if (!hasAllActuals) {
-      // Highlight the final month row and show a completion prompt above the table
-      const el = document.getElementById('actuals');
-      // Insert a banner above the table asking user to fill in final month
-      const banner = document.createElement('div');
-      banner.id = 'complete-banner';
-      banner.style.cssText = 'background:#fef3c7;border:1px solid #fcd34d;border-radius:8px;padding:12px 16px;margin-bottom:1rem;font-size:13px;color:#92400e';
-      banner.innerHTML = '<strong>⚠ Final actuals required for ' + monthLabel(finalMonth) + '</strong><br>'
-        + 'Enter the final Labour, Materials, Overhead, and Billing figures below (enter 0 for nil), then click <strong>Confirm &amp; complete</strong>.'
-        + '<div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">'
-        + '<button class="btn btn-sm" style="background:#f0fdf4;border-color:#86efac;color:#15803d" id="confirm-complete-btn" onclick="confirmComplete(' + idx + ',\'' + finalMonth + '\')">Confirm &amp; complete</button>'
-        + '<button class="btn btn-sm" onclick="document.getElementById(\'complete-banner\').remove()">Cancel</button>'
-        + '</div>';
-
-      // Insert after pills, before job header
-      const existingBanner = document.getElementById('complete-banner');
-      if (existingBanner) existingBanner.remove();
-      el.insertBefore(banner, el.firstChild);
-
-      // Scroll to and highlight the final month row in the table
-      // Find the row by looking for the month label text
-      setTimeout(() => {
-        const rows = el.querySelectorAll('table tr');
-        rows.forEach(row => {
-          if (row.textContent.includes(monthLabel(finalMonth))) {
-            row.style.outline = '2px solid #f59e0b';
-            row.style.background = '#fffbeb';
-            row.scrollIntoView({ behavior: 'smooth', block: 'center' });
-          }
-        });
-      }, 100);
+      // Open the final actuals modal
+      _completeJobIdx = idx;
+      _completeFinalMonth = finalMonth;
+      document.getElementById('complete-modal-desc').textContent =
+        'Enter final actuals for ' + j.name + (j.projectName ? ' — ' + j.projectName : '') + ' (' + monthLabel(finalMonth) + ')';
+      // Pre-fill any existing values
+      document.getElementById('cm-labour').value   = existing.labour    !== undefined ? existing.labour    : '';
+      document.getElementById('cm-materials').value = existing.materials !== undefined ? existing.materials : '';
+      document.getElementById('cm-overhead').value  = existing.overhead  !== undefined ? existing.overhead  : '';
+      document.getElementById('cm-billing').value   = existing.billing   !== undefined ? existing.billing   : '';
+      document.getElementById('complete-modal-backdrop').classList.add('open');
       return;
     }
   }
 
-  if (!confirm('Mark "' + j.name + '" as complete? Remaining cost forecast will be removed. Billing balance stays until invoiced. Click "Undo complete" to reverse.')) return;
+  // All actuals present — just confirm and complete
+  if (!confirm('Mark "' + j.name + '" as complete? Remaining cost forecast will be removed. Billing balance stays until invoiced.')) return;
+  j.status = 'complete';
+  renderAll();
+  await dbSave(j);
+}
+
+async function submitComplete() {
+  const labVal = document.getElementById('cm-labour').value;
+  const matVal = document.getElementById('cm-materials').value;
+  const ovhVal = document.getElementById('cm-overhead').value;
+  const bilVal = document.getElementById('cm-billing').value;
+
+  if ([labVal, matVal, ovhVal, bilVal].some(v => v === '' || v === null)) {
+    alert('Please enter all four values. Enter 0 for any that are nil.');
+    return;
+  }
+
+  const j = jobs[_completeJobIdx];
+  const m = _completeFinalMonth;
+  if (!j.actuals[m]) j.actuals[m] = {};
+  j.actuals[m].labour    = parseFloat(labVal);
+  j.actuals[m].materials = parseFloat(matVal);
+  j.actuals[m].overhead  = parseFloat(ovhVal);
+  j.actuals[m].billing   = parseFloat(bilVal);
+
+  document.getElementById('complete-modal-backdrop').classList.remove('open');
+
   j.status = 'complete';
   renderAll();
   await dbSave(j);
 }
 
 async function confirmComplete(idx, finalMonth) {
-  const j = jobs[idx];
-  const existing = j.actuals[finalMonth] || {};
-  const hasAllActuals = ['labour','materials','overhead','billing'].every(f => existing[f] !== undefined);
-
-  if (!hasAllActuals) {
-    // Check which fields are still missing
-    const missing = ['labour','materials','overhead','billing'].filter(f => existing[f] === undefined);
-    alert('Please enter values for: ' + missing.join(', ') + ' in ' + monthLabel(finalMonth) + ' before completing.\n\nEnter 0 if there is nothing to record.');
-    return;
-  }
-
-  const banner = document.getElementById('complete-banner');
-  if (banner) banner.remove();
-
-  j.status = 'complete';
-  renderAll();
-  await dbSave(j);
+  // Legacy — now handled by submitComplete
 }
 
 async function undoJobComplete(idx) {
