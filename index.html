@@ -2236,7 +2236,7 @@ function renderForecastSection() {
       const jGross = prevBil.gross, jRet = prevBil.ret, jNet = jGross - jRet;
       const jCost = jL + jM + jO;
       if (jCost === 0 && jNet === 0) return;
-      jobDetails.push({ name: j.name, client: j.client, jL, jM, jO, jGross, jRet, jNet, jCost });
+      jobDetails.push({ name: j.name, projectName: j.projectName || '', client: j.client, jL, jM, jO, jGross, jRet, jNet, jCost });
     });
 
     const liabDetails = [];
@@ -2272,7 +2272,7 @@ function renderForecastSection() {
     jobDetails.forEach(d => {
       const jMargin = d.jNet - d.jCost;
       detailHtml += `<tr style="border-top:0.5px solid #eee">
-        <td style="padding:4px 8px"><strong>${d.name}</strong>${d.client?` <span style="color:#888">— ${d.client}</span>`:''}  </td>
+        <td style="padding:4px 8px"><strong>${d.name}</strong>${d.projectName ? ` <span style="color:#888;font-size:11px">— ${d.projectName}</span>` : ''}${d.client?` <span style="color:#888">— ${d.client}</span>`:''}  </td>
         <td style="text-align:right;padding:4px 8px">${d.jL>0?fmt(d.jL):'—'}</td>
         <td style="text-align:right;padding:4px 8px">${d.jM>0?fmt(d.jM):'—'}</td>
         <td style="text-align:right;padding:4px 8px">${d.jO>0?fmt(d.jO):'—'}</td>
@@ -2296,6 +2296,32 @@ function renderForecastSection() {
       creditsThisMonth.forEach(c => { detailHtml += `<span style="color:#6d28d9;margin-right:12px">${c.name}: +${fmt(c.amount)}</span>`; });
       detailHtml += `</td></tr>`;
     }
+
+    // Totals footer
+    const totalGrossMargin = jobDetails.reduce((s, d) => s + d.jNet - d.jCost, 0);
+    const totalCredits = creditsThisMonth.reduce((s, c) => s + c.amount, 0);
+    const netBalance = totalGrossMargin + totalCredits - r.tLiab;
+    detailHtml += `<tr style="border-top:2px solid #ddd;background:#f0f0f0;font-weight:600;font-size:12px">
+      <td colspan="6" style="padding:5px 8px">Gross job margin (billing − job costs)</td>
+      <td colspan="2" style="text-align:right;padding:5px 8px" class="${totalGrossMargin>=0?'green':'red'}">${totalGrossMargin>=0?'+':''}${fmt(totalGrossMargin)}</td>
+    </tr>`;
+    if (r.tLiab > 0) {
+      detailHtml += `<tr style="background:#f5f0ff;font-size:12px">
+        <td colspan="6" style="padding:4px 8px;color:#6d28d9">Less: liabilities this month</td>
+        <td colspan="2" style="text-align:right;padding:4px 8px;color:#6d28d9">-${fmt(r.tLiab)}</td>
+      </tr>`;
+    }
+    if (totalCredits > 0) {
+      detailHtml += `<tr style="background:#faf5ff;font-size:12px">
+        <td colspan="6" style="padding:4px 8px;color:#6d28d9">Plus: credits received</td>
+        <td colspan="2" style="text-align:right;padding:4px 8px;color:#6d28d9">+${fmt(totalCredits)}</td>
+      </tr>`;
+    }
+    detailHtml += `<tr style="background:#e8f0fe;font-weight:700;font-size:12px;border-top:1px solid #c7d7f4">
+      <td colspan="6" style="padding:5px 8px">Net balance this month</td>
+      <td colspan="2" style="text-align:right;padding:5px 8px" class="${netBalance>=0?'green':'red'}">${netBalance>=0?'+':''}${fmt(netBalance)}</td>
+    </tr>`;
+
     detailHtml += `</tbody></table></div></td></tr>`;
     fctbl += detailHtml;
   });
