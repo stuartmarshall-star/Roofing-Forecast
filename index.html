@@ -139,7 +139,7 @@
     </div>
     <div class="pin-error" id="pin-error"></div>
     <div class="pin-hint">Share this PIN with your accountant</div>
-    <div style="margin-top:1.5rem;font-size:10px;color:#bbb;font-family:monospace">v2.25-Apr-11-11:30</div>
+    <div style="margin-top:1.5rem;font-size:10px;color:#bbb;font-family:monospace">v2.26-Apr-11-11:45</div>
   </div>
 </div>
 
@@ -160,7 +160,7 @@
     </div>
     <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
       <span class="saving" id="saving-indicator"></span>
-      <span style="font-size:10px;color:#bbb;font-family:monospace;user-select:none" title="Build version">v2.25-Apr-11-11:30</span>
+      <span style="font-size:10px;color:#bbb;font-family:monospace;user-select:none" title="Build version">v2.26-Apr-11-11:45</span>
       <button id="btn-job-template" class="btn tab-btn-jobs" style="display:none" onclick="downloadCsvTemplate()">⬇ Job template</button>
       <button id="btn-import-jobs" class="btn tab-btn-jobs" style="display:none" onclick="document.getElementById('csv-file-input').click()">⬆ Import jobs</button>
       <button id="btn-actuals-template" class="btn tab-btn-actuals" style="display:none" onclick="downloadActualsTemplate()">⬇ Actuals template</button>
@@ -515,6 +515,7 @@ document.addEventListener('keydown', e => {
 // ── Supabase credentials ─────────────────────────────────────────────────────
 const SB_URL = 'https://asaedxtvehsjmrkdpegj.supabase.co';
 const SB_KEY = 'sb_publishable_IklQe45ab06L_eIrjeUeQg_wifiK9FA';
+const SB_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFzYWVkeHR2ZWhzam1ya2RwZWdqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzM3NjMyMDMsImV4cCI6MjA4OTMzOTIwM30.INMd5nl21PxHv6zQgruIPRXcHy2sELNIsErueXrZ7rI';
 
 let jobs = [];
 let liabilities = [];
@@ -3451,7 +3452,7 @@ async function qboConnect() {
   statusEl.textContent = 'Opening QuickBooks authorisation...';
   try {
     const res = await fetch(QBO_FUNCTIONS_BASE + '/qbo-auth', {
-      headers: { 'Authorization': 'Bearer ' + SB_KEY }
+      headers: { 'Authorization': 'Bearer ' + SB_ANON_KEY }
     });
     const text = await res.text();
     console.log('qbo-auth response status:', res.status, 'body:', text);
@@ -3501,7 +3502,7 @@ async function qboSync() {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': 'Bearer ' + SB_KEY
+        'Authorization': 'Bearer ' + SB_ANON_KEY
       },
     });
     const data = await res.json();
