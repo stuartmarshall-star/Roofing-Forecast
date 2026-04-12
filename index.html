@@ -139,7 +139,7 @@
     </div>
     <div class="pin-error" id="pin-error"></div>
     <div class="pin-hint">Share this PIN with your accountant</div>
-    <div style="margin-top:1.5rem;font-size:10px;color:#bbb;font-family:monospace">v2.22-Apr-11-10:35</div>
+    <div style="margin-top:1.5rem;font-size:10px;color:#bbb;font-family:monospace">v2.23-Apr-11-11:00</div>
   </div>
 </div>
 
@@ -160,7 +160,7 @@
     </div>
     <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
       <span class="saving" id="saving-indicator"></span>
-      <span style="font-size:10px;color:#bbb;font-family:monospace;user-select:none" title="Build version">v2.22-Apr-11-10:35</span>
+      <span style="font-size:10px;color:#bbb;font-family:monospace;user-select:none" title="Build version">v2.23-Apr-11-11:00</span>
       <button id="btn-job-template" class="btn tab-btn-jobs" style="display:none" onclick="downloadCsvTemplate()">⬇ Job template</button>
       <button id="btn-import-jobs" class="btn tab-btn-jobs" style="display:none" onclick="document.getElementById('csv-file-input').click()">⬆ Import jobs</button>
       <button id="btn-actuals-template" class="btn tab-btn-actuals" style="display:none" onclick="downloadActualsTemplate()">⬇ Actuals template</button>
@@ -173,6 +173,9 @@
       <button id="btn-credits-template" class="btn tab-btn-credits" style="display:none" onclick="downloadCreditsTemplate()">⬇ Credits template</button>
       <button id="btn-import-credits" class="btn tab-btn-credits" style="display:none" onclick="document.getElementById('credits-csv-input').click()">⬆ Import credits</button>
       <input type="file" id="credits-csv-input" accept=".csv" style="display:none" onchange="handleCreditsCsvImport(this)">
+      <button id="btn-qbo-connect" class="btn" style="background:#2ca01c;color:#fff;border-color:#2ca01c;display:none" onclick="qboConnect()">🔗 Connect QuickBooks</button>
+      <button id="btn-qbo-sync" class="btn" style="background:#0077c5;color:#fff;border-color:#0077c5;display:none" onclick="qboSync()">⟳ Sync from QB</button>
+      <span id="qbo-status" style="font-size:11px;color:#888"></span>
       <button class="btn btn-primary" onclick="openAddJob()">+ Add job</button>
     </div>
   </div>
@@ -3426,11 +3429,107 @@ function renderVarianceReport() {
   el.innerHTML = html;
 }
 
+// ── QuickBooks Online integration ─────────────────────────────────────────────
+
+const QBO_FUNCTIONS_BASE = SB_URL + '/functions/v1';
+
+async function qboCheckConnection() {
+  try {
+    const { data } = await window._sb.from('settings').select('value').eq('key', 'qbo_tokens').single();
+    const connected = !!data?.value;
+    document.getElementById('btn-qbo-connect').style.display = connected ? 'none' : 'inline-flex';
+    document.getElementById('btn-qbo-sync').style.display    = connected ? 'inline-flex' : 'none';
+    document.getElementById('qbo-status').textContent        = connected ? '✓ QB connected' : '';
+  } catch {
+    document.getElementById('btn-qbo-connect').style.display = 'inline-flex';
+    document.getElementById('btn-qbo-sync').style.display    = 'none';
+  }
+}
+
+async function qboConnect() {
+  const statusEl = document.getElementById('qbo-status');
+  statusEl.textContent = 'Opening QuickBooks authorisation...';
+  try {
+    const res  = await fetch(QBO_FUNCTIONS_BASE + '/qbo-auth');
+    const data = await res.json();
+    if (!data.url) throw new Error('No auth URL returned');
+
+    // Open OAuth popup
+    const popup = window.open(data.url, 'qbo-auth', 'width=600,height=700,scrollbars=yes');
+
+    // Listen for callback message from popup
+    const handler = async (event) => {
+      if (event.data?.type === 'QBO_CONNECTED') {
+        window.removeEventListener('message', handler);
+        statusEl.textContent = '✓ QB connected';
+        await qboCheckConnection();
+        // Auto-sync on first connect
+        await qboSync();
+      }
+    };
+    window.addEventListener('message', handler);
+
+    // Fallback — check every 2s if popup closed
+    const timer = setInterval(async () => {
+      if (popup.closed) {
+        clearInterval(timer);
+        window.removeEventListener('message', handler);
+        await qboCheckConnection();
+      }
+    }, 2000);
+
+  } catch (err) {
+    statusEl.textContent = '✗ Connect failed: ' + err.message;
+  }
+}
+
+async function qboSync() {
+  const statusEl = document.getElementById('qbo-status');
+  const btn      = document.getElementById('btn-qbo-sync');
+  btn.textContent    = '⟳ Syncing...';
+  btn.disabled       = true;
+  statusEl.textContent = 'Syncing from QuickBooks...';
+
+  try {
+    const res  = await fetch(QBO_FUNCTIONS_BASE + '/qbo-sync', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+    });
+    const data = await res.json();
+
+    if (!data.success) throw new Error(data.error || 'Sync failed');
+
+    const s = data.summary;
+    const a = data.applied;
+    statusEl.textContent = '✓ Synced — '
+      + s.projectsFound + ' projects, '
+      + a.updated + ' jobs updated'
+      + (a.notFound?.length ? ', ' + a.notFound.length + ' not matched' : '');
+
+    // Reload jobs from Supabase to pick up new actuals
+    await loadJobs();
+
+    if (a.notFound?.length) {
+      console.log('QBO projects not matched to forecast jobs:', a.notFound);
+    }
+
+  } catch (err) {
+    statusEl.textContent = '✗ Sync failed: ' + err.message;
+    if (err.message.includes('not connected')) {
+      await qboCheckConnection();
+    }
+  } finally {
+    btn.textContent = '⟳ Sync from QB';
+    btn.disabled    = false;
+  }
+}
+
 // Start
 document.addEventListener('DOMContentLoaded', () => {
   initForecastControls();
   renderAll();
   loadJobs();
+  qboCheckConnection();
 });
 </script>
 </body>
