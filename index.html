@@ -139,7 +139,7 @@
     </div>
     <div class="pin-error" id="pin-error"></div>
     <div class="pin-hint">Share this PIN with your accountant</div>
-    <div style="margin-top:1.5rem;font-size:10px;color:#bbb;font-family:monospace">v2.38-Apr-12-12:45</div>
+    <div style="margin-top:1.5rem;font-size:10px;color:#bbb;font-family:monospace">v2.39-Apr-12-13:00</div>
   </div>
 </div>
 
@@ -160,7 +160,7 @@
     </div>
     <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
       <span class="saving" id="saving-indicator"></span>
-      <span style="font-size:10px;color:#bbb;font-family:monospace;user-select:none" title="Build version">v2.38-Apr-12-12:45</span>
+      <span style="font-size:10px;color:#bbb;font-family:monospace;user-select:none" title="Build version">v2.39-Apr-12-13:00</span>
       <button id="btn-job-template" class="btn tab-btn-jobs" style="display:none" onclick="downloadCsvTemplate()">⬇ Job template</button>
       <button id="btn-import-jobs" class="btn tab-btn-jobs" style="display:none" onclick="document.getElementById('csv-file-input').click()">⬆ Import jobs</button>
       <button id="btn-actuals-template" class="btn tab-btn-actuals" style="display:none" onclick="downloadActualsTemplate()">⬇ Actuals template</button>
@@ -2500,9 +2500,8 @@ function renderForecastSection() {
         tL += buildSchedule(j,'labour')[m]?.value || 0;
         tO += buildSchedule(j,'overhead')[m]?.value || 0;
       }
-      // Materials: lag by 1 month only for new jobs, otherwise current month
-      const matMonth = (useOffset && ms.includes(mPrev)) ? mPrev : m;
-      if (ms.includes(matMonth)) tM += buildSchedule(j,'materials')[matMonth]?.value || 0;
+      // Materials: always lag 1 month (paid on 30-day account regardless of QBO sync)
+      if (ms.includes(mPrev)) tM += buildSchedule(j,'materials')[mPrev]?.value || 0;
 
       // Billing: apply payment terms only for new jobs, otherwise current month
       const billingMonth = useOffset
@@ -2640,8 +2639,8 @@ function renderForecastSection() {
 
       const jL = hasCur ? (buildSchedule(j,'labour')[r.m]?.value || 0) : 0;
       const jO = hasCur ? (buildSchedule(j,'overhead')[r.m]?.value || 0) : 0;
-      const matMonth = useOffset ? mPrev : r.m;
-      const jM = ms.includes(matMonth) ? (buildSchedule(j,'materials')[matMonth]?.value || 0) : 0;
+      // Materials always lag 1 month
+      const jM = ms.includes(mPrev) ? (buildSchedule(j,'materials')[mPrev]?.value || 0) : 0;
       const jBillingMonth = useOffset
         ? (j.paymentTerms === 0 ? r.m : (j.paymentTerms >= 2) ? prevMonth(mPrev) : mPrev)
         : r.m;
