@@ -139,7 +139,7 @@
     </div>
     <div class="pin-error" id="pin-error"></div>
     <div class="pin-hint">Share this PIN with your accountant</div>
-    <div style="margin-top:1.5rem;font-size:10px;color:#bbb;font-family:monospace">v2.29-Apr-12-09:30</div>
+    <div style="margin-top:1.5rem;font-size:10px;color:#bbb;font-family:monospace">v2.30-Apr-12-10:00</div>
   </div>
 </div>
 
@@ -160,7 +160,7 @@
     </div>
     <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
       <span class="saving" id="saving-indicator"></span>
-      <span style="font-size:10px;color:#bbb;font-family:monospace;user-select:none" title="Build version">v2.29-Apr-12-09:30</span>
+      <span style="font-size:10px;color:#bbb;font-family:monospace;user-select:none" title="Build version">v2.30-Apr-12-10:00</span>
       <button id="btn-job-template" class="btn tab-btn-jobs" style="display:none" onclick="downloadCsvTemplate()">⬇ Job template</button>
       <button id="btn-import-jobs" class="btn tab-btn-jobs" style="display:none" onclick="document.getElementById('csv-file-input').click()">⬆ Import jobs</button>
       <button id="btn-actuals-template" class="btn tab-btn-actuals" style="display:none" onclick="downloadActualsTemplate()">⬇ Actuals template</button>
@@ -1920,6 +1920,76 @@ function setActualsJob(idx) { activeActualsJob = idx; renderActualsSection(); }
 let _completeJobIdx = null;
 let _completeFinalMonth = null;
 
+function downloadJobPDF(idx) {
+  const j = jobs[idx];
+  const cur = getCurrentMonth();
+  const months = getEffectiveMonths(j);
+  const fields = ['labour', 'materials', 'overhead', 'billing'];
+  const scheds = {};
+  fields.forEach(f => { scheds[f] = buildSchedule(j, f); });
+
+  // Build table rows
+  let rows = '';
+  let tL=0, tM=0, tO=0, tB=0;
+  months.forEach(m => {
+    const isPast = m < cur;
+    const vL = scheds.labour[m]?.value || 0;
+    const vM = scheds.materials[m]?.value || 0;
+    const vO = scheds.overhead[m]?.value || 0;
+    const vB = scheds.billing[m]?.value || 0;
+    const tc = vL + vM + vO;
+    const cash = vB - tc;
+    const aL = j.actuals[m]?.labour;
+    const aM = j.actuals[m]?.materials;
+    const aO = j.actuals[m]?.overhead;
+    const aB = j.actuals[m]?.billing;
+    const isActual = aL !== undefined || aM !== undefined || aO !== undefined || aB !== undefined;
+    tL += vL; tM += vM; tO += vO; tB += vB;
+    rows += '<tr style="background:' + (isActual ? '#f9fafb' : 'white') + '">'
+      + '<td>' + monthLabel(m) + '</td>'
+      + '<td style="text-align:right">' + (aL !== undefined ? '<strong>' + fmt(aL) + '</strong>' : fmt(vL)) + '</td>'
+      + '<td style="text-align:right">' + (aM !== undefined ? '<strong>' + fmt(aM) + '</strong>' : fmt(vM)) + '</td>'
+      + '<td style="text-align:right">' + (aO !== undefined ? '<strong>' + fmt(aO) + '</strong>' : fmt(vO)) + '</td>'
+      + '<td style="text-align:right">' + (aB !== undefined ? '<strong>' + fmt(aB) + '</strong>' : fmt(vB)) + '</td>'
+      + '<td style="text-align:right;color:' + (cash >= 0 ? '#16a34a' : '#dc2626') + '">' + (cash >= 0 ? '+' : '') + fmt(cash) + '</td>'
+      + '<td style="font-size:11px;color:#888">' + (isActual ? 'actual' : 'forecast') + '</td>'
+      + '</tr>';
+  });
+
+  const html = '<!DOCTYPE html><html><head><title>' + j.name + ' — Actuals Report</title>'
+    + '<style>body{font-family:Arial,sans-serif;font-size:12px;margin:20px}h1{font-size:16px;margin-bottom:4px}h2{font-size:13px;color:#555;font-weight:normal;margin-bottom:16px}'
+    + 'table{width:100%;border-collapse:collapse}th{background:#f0f0f0;padding:6px 8px;text-align:left;border:1px solid #ddd;font-size:11px}'
+    + 'td{padding:5px 8px;border:1px solid #eee}tfoot td{background:#f0f0f0;font-weight:bold;border:1px solid #ddd}'
+    + '.meta{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:16px}'
+    + '.meta-box{background:#f9f9f9;border:1px solid #eee;border-radius:4px;padding:8px}'
+    + '.meta-label{font-size:10px;color:#888;margin-bottom:2px}.meta-val{font-size:13px;font-weight:600}'
+    + '@media print{body{margin:10px}button{display:none}}'
+    + '</style></head><body>'
+    + '<h1>' + j.name + (j.projectName ? ' — ' + j.projectName : '') + '</h1>'
+    + '<h2>' + (j.client || '') + ' &nbsp;|&nbsp; Status: ' + j.status + ' &nbsp;|&nbsp; Generated: ' + new Date().toLocaleDateString('en-GB') + '</h2>'
+    + '<div class="meta">'
+    + '<div class="meta-box"><div class="meta-label">Contract value</div><div class="meta-val">' + fmt(j.contract) + '</div></div>'
+    + '<div class="meta-box"><div class="meta-label">Labour budget</div><div class="meta-val">' + fmt(j.labour) + '</div></div>'
+    + '<div class="meta-box"><div class="meta-label">Materials budget</div><div class="meta-val">' + fmt(j.materials) + '</div></div>'
+    + '<div class="meta-box"><div class="meta-label">Overhead budget</div><div class="meta-val">' + fmt(j.overhead) + '</div></div>'
+    + '<div class="meta-box"><div class="meta-label">Retention</div><div class="meta-val">' + j.retention + '%</div></div>'
+    + '<div class="meta-box"><div class="meta-label">Billing received</div><div class="meta-val">' + fmt(getSummary(j,'billing').actualSpent) + '</div></div>'
+    + '<div class="meta-box"><div class="meta-label">Still to bill</div><div class="meta-val">' + fmt(getSummary(j,'billing').balance) + '</div></div>'
+    + '<div class="meta-box"><div class="meta-label">Forecast margin</div><div class="meta-val">' + fmtPct(j.contract > 0 ? (j.contract - j.labour - j.materials - j.overhead) / j.contract * 100 : 0) + '</div></div>'
+    + '</div>'
+    + '<table><thead><tr><th>Month</th><th style="text-align:right">Labour</th><th style="text-align:right">Materials</th><th style="text-align:right">Overhead</th><th style="text-align:right">Billing recv.</th><th style="text-align:right">Cashflow</th><th>Type</th></tr></thead>'
+    + '<tbody>' + rows + '</tbody>'
+    + '<tfoot><tr><td>Total</td><td style="text-align:right">' + fmt(tL) + '</td><td style="text-align:right">' + fmt(tM) + '</td><td style="text-align:right">' + fmt(tO) + '</td><td style="text-align:right">' + fmt(tB) + '</td><td style="text-align:right;color:' + (tB-tL-tM-tO>=0?'#16a34a':'#dc2626') + '">' + (tB-tL-tM-tO>=0?'+':'') + fmt(tB-tL-tM-tO) + '</td><td></td></tr></tfoot>'
+    + '</table>'
+    + '<p style="margin-top:16px;font-size:10px;color:#aaa">Bold figures = actuals entered. Regular figures = forecast. Generated by RSE Forecast ' + new Date().toISOString() + '</p>'
+    + '<script>window.onload=function(){window.print();}<\/script>'
+    + '</body></html>';
+
+  const win = window.open('', '_blank');
+  win.document.write(html);
+  win.document.close();
+}
+
 async function markJobComplete(idx) {
   const j = jobs[idx];
   const cur = getCurrentMonth();
@@ -2032,6 +2102,7 @@ function renderActualsSection() {
     + '<button class="btn btn-sm" onclick="editJob(' + activeActualsJob + ')">Edit job details</button>'
     + (j.status === 'active' ? '<button class="btn btn-sm" style="background:#f0fdf4;border-color:#86efac;color:#15803d" onclick="markJobComplete(' + activeActualsJob + ')">✓ Mark complete</button>' : '')
     + (j.status === 'complete' ? '<span style="background:#f0fdf4;border:1px solid #86efac;color:#15803d;padding:4px 10px;border-radius:6px;font-size:12px;font-weight:500">✓ Complete</span> <button class="btn btn-sm" style="background:#fef9c3;border-color:#fde68a;color:#a16207" onclick="undoJobComplete(' + activeActualsJob + ')">Undo complete</button>' : '')
+    + '<button class="btn btn-sm" onclick="downloadJobPDF(' + activeActualsJob + ')" style="background:#f8f8f8">⬇ PDF</button>'
     + '</div></div>';
 
   // Health banners
