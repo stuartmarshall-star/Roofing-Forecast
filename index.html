@@ -139,7 +139,7 @@
     </div>
     <div class="pin-error" id="pin-error"></div>
     <div class="pin-hint">Share this PIN with your accountant</div>
-    <div style="margin-top:1.5rem;font-size:10px;color:#bbb;font-family:monospace">v2.30-Apr-12-10:00</div>
+    <div style="margin-top:1.5rem;font-size:10px;color:#bbb;font-family:monospace">v2.31-Apr-12-10:30</div>
   </div>
 </div>
 
@@ -160,7 +160,7 @@
     </div>
     <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
       <span class="saving" id="saving-indicator"></span>
-      <span style="font-size:10px;color:#bbb;font-family:monospace;user-select:none" title="Build version">v2.30-Apr-12-10:00</span>
+      <span style="font-size:10px;color:#bbb;font-family:monospace;user-select:none" title="Build version">v2.31-Apr-12-10:30</span>
       <button id="btn-job-template" class="btn tab-btn-jobs" style="display:none" onclick="downloadCsvTemplate()">⬇ Job template</button>
       <button id="btn-import-jobs" class="btn tab-btn-jobs" style="display:none" onclick="document.getElementById('csv-file-input').click()">⬆ Import jobs</button>
       <button id="btn-actuals-template" class="btn tab-btn-actuals" style="display:none" onclick="downloadActualsTemplate()">⬇ Actuals template</button>
@@ -3604,6 +3604,7 @@ async function qboSync() {
     if (data.summary?.accountNames?.length) {
       console.log('QBO account names found in bills:', data.summary.accountNames);
     }
+    console.log('Sync applied with current month filter:', data.applied?.curMonth);
 
   } catch (err) {
     statusEl.textContent = '✗ Sync failed: ' + err.message;
