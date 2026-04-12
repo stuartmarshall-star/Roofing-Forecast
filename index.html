@@ -139,7 +139,7 @@
     </div>
     <div class="pin-error" id="pin-error"></div>
     <div class="pin-hint">Share this PIN with your accountant</div>
-    <div style="margin-top:1.5rem;font-size:10px;color:#bbb;font-family:monospace">v2.24-Apr-11-11:15</div>
+    <div style="margin-top:1.5rem;font-size:10px;color:#bbb;font-family:monospace">v2.25-Apr-11-11:30</div>
   </div>
 </div>
 
@@ -160,7 +160,7 @@
     </div>
     <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
       <span class="saving" id="saving-indicator"></span>
-      <span style="font-size:10px;color:#bbb;font-family:monospace;user-select:none" title="Build version">v2.24-Apr-11-11:15</span>
+      <span style="font-size:10px;color:#bbb;font-family:monospace;user-select:none" title="Build version">v2.25-Apr-11-11:30</span>
       <button id="btn-job-template" class="btn tab-btn-jobs" style="display:none" onclick="downloadCsvTemplate()">⬇ Job template</button>
       <button id="btn-import-jobs" class="btn tab-btn-jobs" style="display:none" onclick="document.getElementById('csv-file-input').click()">⬆ Import jobs</button>
       <button id="btn-actuals-template" class="btn tab-btn-actuals" style="display:none" onclick="downloadActualsTemplate()">⬇ Actuals template</button>
@@ -3450,7 +3450,9 @@ async function qboConnect() {
   const statusEl = document.getElementById('qbo-status');
   statusEl.textContent = 'Opening QuickBooks authorisation...';
   try {
-    const res = await fetch(QBO_FUNCTIONS_BASE + '/qbo-auth');
+    const res = await fetch(QBO_FUNCTIONS_BASE + '/qbo-auth', {
+      headers: { 'Authorization': 'Bearer ' + SB_KEY }
+    });
     const text = await res.text();
     console.log('qbo-auth response status:', res.status, 'body:', text);
     if (!res.ok) throw new Error('HTTP ' + res.status + ': ' + text.substring(0, 200));
@@ -3497,7 +3499,10 @@ async function qboSync() {
   try {
     const res  = await fetch(QBO_FUNCTIONS_BASE + '/qbo-sync', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer ' + SB_KEY
+      },
     });
     const data = await res.json();
 
