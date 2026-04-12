@@ -139,7 +139,7 @@
     </div>
     <div class="pin-error" id="pin-error"></div>
     <div class="pin-hint">Share this PIN with your accountant</div>
-    <div style="margin-top:1.5rem;font-size:10px;color:#bbb;font-family:monospace">v2.34-Apr-12-11:45</div>
+    <div style="margin-top:1.5rem;font-size:10px;color:#bbb;font-family:monospace">v2.35-Apr-12-12:00</div>
   </div>
 </div>
 
@@ -160,7 +160,7 @@
     </div>
     <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
       <span class="saving" id="saving-indicator"></span>
-      <span style="font-size:10px;color:#bbb;font-family:monospace;user-select:none" title="Build version">v2.34-Apr-12-11:45</span>
+      <span style="font-size:10px;color:#bbb;font-family:monospace;user-select:none" title="Build version">v2.35-Apr-12-12:00</span>
       <button id="btn-job-template" class="btn tab-btn-jobs" style="display:none" onclick="downloadCsvTemplate()">⬇ Job template</button>
       <button id="btn-import-jobs" class="btn tab-btn-jobs" style="display:none" onclick="document.getElementById('csv-file-input').click()">⬆ Import jobs</button>
       <button id="btn-actuals-template" class="btn tab-btn-actuals" style="display:none" onclick="downloadActualsTemplate()">⬇ Actuals template</button>
@@ -2201,6 +2201,36 @@ function renderActualsSection() {
     + '<div class="balance-box-label">Total cost remaining</div>'
     + '<div class="balance-box-val">' + fmt(['labour','materials','overhead'].reduce((s,f) => s + getSummary(j, f).balance, 0)) + '</div>'
     + '<div style="font-size:11px;color:#888;margin-top:2px">Forecast spend still to come</div>'
+    + '</div>'
+    + '</div>';
+
+  // Margin row
+  const actCostTotal = labSum.actualSpent + matSum.actualSpent + ovhSum.actualSpent;
+  const actBilTotal  = bs.actualSpent;
+  const fcCostTotal  = j.labour + j.materials + j.overhead;
+  const fcNetBilling = j.contract * (1 - j.retention / 100);
+  const fcMargin     = fcNetBilling > 0 ? (fcNetBilling - fcCostTotal) / fcNetBilling * 100 : 0;
+  const actMargin    = actBilTotal > 0 ? (actBilTotal - actCostTotal) / actBilTotal * 100 : null;
+  const actProfit    = actBilTotal > 0 ? actBilTotal - actCostTotal : null;
+  const fcProfit     = fcNetBilling - fcCostTotal;
+  const marginDiff   = actMargin !== null ? actMargin - fcMargin : null;
+  const marginCol    = actMargin !== null ? (actMargin >= fcMargin ? '#16a34a' : '#dc2626') : '#888';
+
+  bal += '<div class="balance-strip">'
+    + '<div class="balance-box">'
+    + '<div class="balance-box-label">Forecast margin</div>'
+    + '<div class="balance-box-val">' + fmtPct(fcMargin) + '</div>'
+    + '<div style="font-size:11px;color:#888;margin-top:2px">Profit ' + fmt(fcProfit) + ' on net contract ' + fmt(fcNetBilling) + '</div>'
+    + '</div>'
+    + '<div class="balance-box">'
+    + '<div class="balance-box-label">Actual margin to date</div>'
+    + '<div class="balance-box-val" style="color:' + marginCol + '">' + (actMargin !== null ? fmtPct(actMargin) : '—') + '</div>'
+    + '<div style="font-size:11px;color:#888;margin-top:2px">' + (actProfit !== null ? 'Profit ' + fmt(actProfit) + ' on ' + fmt(actBilTotal) + ' billed' : 'No billing actuals yet') + '</div>'
+    + '</div>'
+    + '<div class="balance-box">'
+    + '<div class="balance-box-label">Margin variance</div>'
+    + '<div class="balance-box-val" style="color:' + marginCol + '">' + (marginDiff !== null ? (marginDiff >= 0 ? '+' : '') + fmtPct(marginDiff) : '—') + '</div>'
+    + '<div style="font-size:11px;color:#888;margin-top:2px">' + (marginDiff !== null ? (marginDiff >= 0 ? 'Ahead of forecast' : 'Behind forecast') : 'Enter billing actuals to see variance') + '</div>'
     + '</div>'
     + '</div>';
 
