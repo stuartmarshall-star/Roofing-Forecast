@@ -139,7 +139,7 @@
     </div>
     <div class="pin-error" id="pin-error"></div>
     <div class="pin-hint">Share this PIN with your accountant</div>
-    <div style="margin-top:1.5rem;font-size:10px;color:#bbb;font-family:monospace">v2.33-Apr-12-11:20</div>
+    <div style="margin-top:1.5rem;font-size:10px;color:#bbb;font-family:monospace">v2.34-Apr-12-11:45</div>
   </div>
 </div>
 
@@ -160,7 +160,7 @@
     </div>
     <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
       <span class="saving" id="saving-indicator"></span>
-      <span style="font-size:10px;color:#bbb;font-family:monospace;user-select:none" title="Build version">v2.33-Apr-12-11:20</span>
+      <span style="font-size:10px;color:#bbb;font-family:monospace;user-select:none" title="Build version">v2.34-Apr-12-11:45</span>
       <button id="btn-job-template" class="btn tab-btn-jobs" style="display:none" onclick="downloadCsvTemplate()">⬇ Job template</button>
       <button id="btn-import-jobs" class="btn tab-btn-jobs" style="display:none" onclick="document.getElementById('csv-file-input').click()">⬆ Import jobs</button>
       <button id="btn-actuals-template" class="btn tab-btn-actuals" style="display:none" onclick="downloadActualsTemplate()">⬇ Actuals template</button>
@@ -778,12 +778,22 @@ function buildSchedule(job, field) {
   const actMonths = new Set();
   let hasPreStartDeposit = false;
   if (field === 'billing') {
+    // Check old-style pre-start actuals deposits
     Object.keys(job.actuals).forEach(m => {
       if (m < job.start && job.actuals[m]._depositRef && job.actuals[m].billing !== undefined) {
         spentActual += job.actuals[m].billing;
         hasPreStartDeposit = true;
       }
     });
+    // Check credits table for received deposit credits linked to this job
+    if (typeof credits !== 'undefined') {
+      credits.forEach(c => {
+        if (c.category === 'deposit' && c.linkedJobRef === job.name && c.received && c.receivedMonth < job.start) {
+          spentActual += c.amount;
+          hasPreStartDeposit = true;
+        }
+      });
+    }
   }
   scheduled.forEach(m => {
     const a = job.actuals[m] && job.actuals[m][field] !== undefined ? job.actuals[m][field] : null;
