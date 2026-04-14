@@ -141,7 +141,7 @@
     </div>
     <div class="pin-error" id="pin-error"></div>
     <div class="pin-hint">Share this PIN with your accountant</div>
-    <div style="margin-top:1.5rem;font-size:10px;color:#bbb;font-family:monospace">v2.49-Apr-14-18:00</div>
+    <div style="margin-top:1.5rem;font-size:10px;color:#bbb;font-family:monospace">v2.50-Apr-14-19:00</div>
   </div>
 </div>
 
@@ -162,7 +162,7 @@
     </div>
     <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
       <span class="saving" id="saving-indicator"></span>
-      <span style="font-size:10px;color:#bbb;font-family:monospace;user-select:none" title="Build version">v2.49-Apr-14-18:00</span>
+      <span style="font-size:10px;color:#bbb;font-family:monospace;user-select:none" title="Build version">v2.50-Apr-14-19:00</span>
       <button id="btn-job-template" class="btn tab-btn-jobs" style="display:none" onclick="downloadCsvTemplate()">⬇ Job template</button>
       <button id="btn-import-jobs" class="btn tab-btn-jobs" style="display:none" onclick="document.getElementById('csv-file-input').click()">⬆ Import jobs</button>
       <button id="btn-actuals-template" class="btn tab-btn-actuals" style="display:none" onclick="downloadActualsTemplate()">⬇ Actuals template</button>
@@ -220,7 +220,11 @@
       <div>
         <button class="btn" onclick="resetForecastControls()">Reset to today</button>
       </div>
-      <div style="margin-left:auto;font-size:13px;color:#888;align-self:center" id="fc-range-label"></div>
+      <div style="margin-left:auto;display:flex;gap:8px;align-items:center">
+        <span style="font-size:13px;color:#888" id="fc-range-label"></span>
+        <button class="btn" onclick="exportForecastPDF()" style="background:#f0fdf4;border-color:#86efac;color:#15803d">⬇ Export PDF</button>
+        <button class="btn" onclick="generateSupplierProposal()" style="background:#eff6ff;border-color:#93c5fd;color:#1d4ed8">✦ Generate Proposal</button>
+      </div>
     </div>
     <div id="fc-content"></div>
   </div>
@@ -2638,32 +2642,6 @@ function renderForecastSection() {
   if (lenEl) {
     const newLen = lenEl.value === 'all' ? 'all' : parseInt(lenEl.value);
     if (newLen !== fcLength) { fcLength = newLen; savePrefs(); }
-  }
-
-  // Ensure controls exist
-  if (!document.getElementById('fc-start')) {
-    el.innerHTML = `
-    <div style="background:#fff;border:1px solid #e8e8e8;border-radius:10px;padding:1rem 1.25rem;margin-bottom:1.25rem;">
-      <div style="display:flex;flex-wrap:wrap;align-items:flex-end;gap:16px;">
-        <div><label style="margin-bottom:4px">Start from</label><input type="text" id="fc-start" style="width:100px" placeholder="MM/YY" onchange="renderForecastSection()"></div>
-        <div><label style="margin-bottom:4px">Show</label>
-          <select id="fc-length" style="width:180px" onchange="onFcLengthChange()">
-            <option value="3">3 months</option><option value="6">6 months</option>
-            <option value="12" selected>12 months</option><option value="18">18 months</option>
-            <option value="24">24 months</option><option value="all">All jobs (start to end)</option>
-          </select>
-        </div>
-        <div><button class="btn" onclick="resetForecastControls()">Reset to today</button></div>
-        <div style="margin-left:auto;display:flex;gap:8px;align-items:center">
-          <span style="font-size:13px;color:#888" id="fc-range-label"></span>
-          <button class="btn" onclick="exportForecastPDF()" style="background:#f0fdf4;border-color:#86efac;color:#15803d">⬇ Export PDF</button>
-          <button class="btn" onclick="generateSupplierProposal()" style="background:#eff6ff;border-color:#93c5fd;color:#1d4ed8">✦ Generate Proposal</button>
-        </div>
-      </div>
-    </div>
-    <div id="fc-content"></div>`;
-    document.getElementById('fc-start').value = fmtMonthInput(fcStartMonth || getCurrentMonth());
-    document.getElementById('fc-length').value = fcLength === 'all' ? 'all' : String(fcLength);
   }
 
   const contentEl = document.getElementById('fc-content') || el;
