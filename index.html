@@ -141,7 +141,7 @@
     </div>
     <div class="pin-error" id="pin-error"></div>
     <div class="pin-hint">Share this PIN with your accountant</div>
-    <div style="margin-top:1.5rem;font-size:10px;color:#bbb;font-family:monospace">v2.45-Apr-14-14:00</div>
+    <div style="margin-top:1.5rem;font-size:10px;color:#bbb;font-family:monospace">v2.46-Apr-14-15:00</div>
   </div>
 </div>
 
@@ -162,7 +162,7 @@
     </div>
     <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
       <span class="saving" id="saving-indicator"></span>
-      <span style="font-size:10px;color:#bbb;font-family:monospace;user-select:none" title="Build version">v2.45-Apr-14-14:00</span>
+      <span style="font-size:10px;color:#bbb;font-family:monospace;user-select:none" title="Build version">v2.46-Apr-14-15:00</span>
       <button id="btn-job-template" class="btn tab-btn-jobs" style="display:none" onclick="downloadCsvTemplate()">⬇ Job template</button>
       <button id="btn-import-jobs" class="btn tab-btn-jobs" style="display:none" onclick="document.getElementById('csv-file-input').click()">⬆ Import jobs</button>
       <button id="btn-actuals-template" class="btn tab-btn-actuals" style="display:none" onclick="downloadActualsTemplate()">⬇ Actuals template</button>
@@ -2483,9 +2483,9 @@ function renderActualsSection() {
     const pastShadePlugin = {
       id: 'pastShade',
       beforeDraw(chart) {
-        const { ctx, chartArea: { left, right, top, bottom }, scales: { x } } = chart;
-        if (!chartArea || curIdx < 0) return;
         const chartArea = chart.chartArea;
+        if (!chartArea || curIdx < 0) return;
+        const { ctx, scales: { x } } = chart;
         // Find pixel position of the boundary between past and present
         // curIdx is current month — shade everything strictly before it
         if (curIdx > 0) {
