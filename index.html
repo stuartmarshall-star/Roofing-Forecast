@@ -141,7 +141,7 @@
     </div>
     <div class="pin-error" id="pin-error"></div>
     <div class="pin-hint">Share this PIN with your accountant</div>
-    <div style="margin-top:1.5rem;font-size:10px;color:#bbb;font-family:monospace">v2.48-Apr-14-17:00</div>
+    <div style="margin-top:1.5rem;font-size:10px;color:#bbb;font-family:monospace">v2.49-Apr-14-18:00</div>
   </div>
 </div>
 
@@ -162,7 +162,7 @@
     </div>
     <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
       <span class="saving" id="saving-indicator"></span>
-      <span style="font-size:10px;color:#bbb;font-family:monospace;user-select:none" title="Build version">v2.48-Apr-14-17:00</span>
+      <span style="font-size:10px;color:#bbb;font-family:monospace;user-select:none" title="Build version">v2.49-Apr-14-18:00</span>
       <button id="btn-job-template" class="btn tab-btn-jobs" style="display:none" onclick="downloadCsvTemplate()">⬇ Job template</button>
       <button id="btn-import-jobs" class="btn tab-btn-jobs" style="display:none" onclick="document.getElementById('csv-file-input').click()">⬆ Import jobs</button>
       <button id="btn-actuals-template" class="btn tab-btn-actuals" style="display:none" onclick="downloadActualsTemplate()">⬇ Actuals template</button>
@@ -2654,7 +2654,11 @@ function renderForecastSection() {
           </select>
         </div>
         <div><button class="btn" onclick="resetForecastControls()">Reset to today</button></div>
-        <div style="margin-left:auto;font-size:13px;color:#888;align-self:center" id="fc-range-label"></div>
+        <div style="margin-left:auto;display:flex;gap:8px;align-items:center">
+          <span style="font-size:13px;color:#888" id="fc-range-label"></span>
+          <button class="btn" onclick="exportForecastPDF()" style="background:#f0fdf4;border-color:#86efac;color:#15803d">⬇ Export PDF</button>
+          <button class="btn" onclick="generateSupplierProposal()" style="background:#eff6ff;border-color:#93c5fd;color:#1d4ed8">✦ Generate Proposal</button>
+        </div>
       </div>
     </div>
     <div id="fc-content"></div>`;
@@ -4063,6 +4067,116 @@ async function autoSyncIfDue() {
         await qboSync(true);
       }
     } catch(e) { /* silent fail — user can sync manually */ }
+  }
+}
+
+// ── Forecast PDF export ───────────────────────────────────────────────────────
+function exportForecastPDF() {
+  const allMonths = getForecastMonths();
+  if (!allMonths.length) { alert('No forecast range selected.'); return; }
+  const cur = getCurrentMonth();
+  const rows = allMonths.map(m => {
+    const mPrev=prevMonth(m),mPrev2=prevMonth(mPrev);
+    let tL=0,tM=0,tO=0,tGrossBilling=0,tRetHeld=0;
+    jobs.forEach(j => {
+      const ms=getEffectiveMonths(j);
+      const hasActuals=Object.keys(j.actuals||{}).some(mo=>{const a=j.actuals[mo];return a&&Object.keys(a).some(f=>a[f]!==undefined&&a[f]!==0);});
+      if(ms.includes(m)){tL+=buildSchedule(j,'labour')[m]?.value||0;tO+=buildSchedule(j,'overhead')[m]?.value||0;}
+      if(ms.includes(mPrev)) tM+=buildSchedule(j,'materials')[mPrev]?.value||0;
+      const useOffset=!hasActuals;
+      const bm=useOffset?(j.paymentTerms===0?m:(j.paymentTerms>=2?mPrev2:mPrev)):m;
+      const pb=getJobBillingForMonth(j,bm);
+      tGrossBilling+=pb.gross;tRetHeld+=pb.ret;
+    });
+    const tC=tL+tM+tO,tLiab=getTotalLiabilitiesForMonth(m),tNetBilling=tGrossBilling-tRetHeld;
+    const tRet=getRetentionReceivedForMonth(m),tCred=getCreditReceivedForMonth(m);
+    const cash=tNetBilling+tRet+tCred-tC-tLiab;
+    return {m,tC,tNetBilling,tLiab,tRet,cash,isActual:m<cur};
+  });
+  let rmBil=0,rmCost=0,rmLiab=0,rmRet=0;
+  rows.forEach(r=>{rmBil+=r.tNetBilling;rmCost+=r.tC;rmLiab+=r.tLiab;rmRet+=r.tRet;});
+  const grossProfit=rmBil-rmCost,netProfit=rmBil+rmRet-rmCost-rmLiab;
+  const grossMargin=rmBil>0?grossProfit/rmBil*100:0,netMargin=rmBil>0?netProfit/rmBil*100:0;
+  const rangeLabel=monthLabel(allMonths[0])+' – '+monthLabel(allMonths[allMonths.length-1]);
+  const activeJobs=jobs.filter(j=>j.status==='active');
+  const activeJobRows=activeJobs.map(j=>{
+    const bs=getSummary(j,'billing');
+    const pct=bs.originalTotal>0?bs.actualSpent/bs.originalTotal*100:0;
+    return `<tr><td>${j.name}</td><td>${j.client||'—'}</td><td>${j.projectName||'—'}</td><td style="text-align:right">${fmt(j.contract)}</td><td style="text-align:right">${fmt(bs.actualSpent)}</td><td style="text-align:right">${fmt(bs.balance)}</td><td style="text-align:right">${fmtPct(pct)}</td></tr>`;
+  }).join('');
+  const monthRows=rows.map(r=>`<tr style="background:${r.isActual?'#f9fafb':'white'}"><td>${monthLabel(r.m)}</td><td style="text-align:right">${fmt(r.tNetBilling)}</td><td style="text-align:right">${fmt(r.tC)}</td><td style="text-align:right">${r.tLiab>0?fmt(r.tLiab):'—'}</td><td style="text-align:right">${r.tRet>0?fmt(r.tRet):'—'}</td><td style="text-align:right;color:${r.cash>=0?'#15803d':'#dc2626'};font-weight:600">${(r.cash>=0?'+':'')+fmt(r.cash)}</td><td style="font-size:10px;color:#888">${r.isActual?'actual':'forecast'}</td></tr>`).join('');
+  const html=`<!DOCTYPE html><html><head><title>RSE Forecast Snapshot — ${rangeLabel}</title>
+  <style>body{font-family:Arial,sans-serif;font-size:12px;margin:24px;color:#1a1a1a}h1{font-size:18px;margin:0 0 2px}h2{font-size:13px;color:#555;font-weight:normal;margin:0 0 20px}h3{font-size:12px;font-weight:600;color:#1d4ed8;text-transform:uppercase;letter-spacing:.05em;margin:20px 0 8px;border-bottom:1px solid #dbeafe;padding-bottom:4px}.metrics{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:20px}.m-box{background:#f9fafb;border:1px solid #e5e7eb;border-radius:6px;padding:10px 12px}.m-label{font-size:10px;color:#888;margin-bottom:3px}.m-val{font-size:15px;font-weight:700}.m-sub{font-size:10px;color:#888;margin-top:2px}.green{color:#15803d}.red{color:#dc2626}table{width:100%;border-collapse:collapse;margin-bottom:16px}th{background:#f0f4ff;padding:6px 8px;text-align:left;border:1px solid #ddd;font-size:11px}td{padding:5px 8px;border:1px solid #eee;font-size:11px}tfoot td{background:#f0f4ff;font-weight:bold;border:1px solid #ddd}.footer{margin-top:24px;font-size:9px;color:#aaa;border-top:1px solid #eee;padding-top:8px}@media print{body{margin:10px}}</style></head><body>
+  <h1>Roofing (South East) Limited — Forecast Snapshot</h1>
+  <h2>${rangeLabel} &nbsp;|&nbsp; Generated ${new Date().toLocaleDateString('en-GB',{day:'numeric',month:'long',year:'numeric'})} &nbsp;|&nbsp; Confidential</h2>
+  <h3>Key Metrics</h3>
+  <div class="metrics">
+    <div class="m-box"><div class="m-label">Net billing in range</div><div class="m-val">${fmt(rmBil)}</div><div class="m-sub">After retention deducted</div></div>
+    <div class="m-box"><div class="m-label">Total job costs</div><div class="m-val">${fmt(rmCost)}</div><div class="m-sub">Labour + materials + overhead</div></div>
+    <div class="m-box"><div class="m-label">Total liabilities</div><div class="m-val ${rmLiab>0?'red':''}">${fmt(rmLiab)}</div><div class="m-sub">Fixed overheads &amp; debt service</div></div>
+    <div class="m-box"><div class="m-label">Forecast gross profit</div><div class="m-val ${grossProfit>=0?'green':'red'}">${fmt(grossProfit)}</div><div class="m-sub">${fmtPct(grossMargin)} of net billing</div></div>
+    <div class="m-box"><div class="m-label">Forecast net profit</div><div class="m-val ${netProfit>=0?'green':'red'}">${fmt(netProfit)}</div><div class="m-sub">${fmtPct(netMargin)} incl. liabilities &amp; credits</div></div>
+    <div class="m-box"><div class="m-label">Active jobs</div><div class="m-val">${activeJobs.length}</div><div class="m-sub">${fmt(activeJobs.reduce((s,j)=>s+getSummary(j,'billing').balance,0))} still to bill</div></div>
+  </div>
+  <h3>Active Jobs — Billing Progress</h3>
+  <table><thead><tr><th>Job ref</th><th>Client</th><th>Project</th><th style="text-align:right">Contract</th><th style="text-align:right">Billed</th><th style="text-align:right">Still to bill</th><th style="text-align:right">Complete</th></tr></thead>
+  <tbody>${activeJobRows}</tbody>
+  <tfoot><tr><td colspan="3">Total</td><td style="text-align:right">${fmt(activeJobs.reduce((s,j)=>s+j.contract,0))}</td><td style="text-align:right">${fmt(activeJobs.reduce((s,j)=>s+getSummary(j,'billing').actualSpent,0))}</td><td style="text-align:right">${fmt(activeJobs.reduce((s,j)=>s+getSummary(j,'billing').balance,0))}</td><td></td></tr></tfoot></table>
+  <h3>Monthly Cashflow</h3>
+  <table><thead><tr><th>Month</th><th style="text-align:right">Net billing</th><th style="text-align:right">Job costs</th><th style="text-align:right">Liabilities</th><th style="text-align:right">Retention rec.</th><th style="text-align:right">Net cashflow</th><th>Type</th></tr></thead>
+  <tbody>${monthRows}</tbody>
+  <tfoot><tr><td>Total</td><td style="text-align:right">${fmt(rmBil)}</td><td style="text-align:right">${fmt(rmCost)}</td><td style="text-align:right">${fmt(rmLiab)}</td><td style="text-align:right">${rmRet>0?fmt(rmRet):'—'}</td><td style="text-align:right;color:${netProfit>=0?'#15803d':'#dc2626'};font-weight:700">${(netProfit>=0?'+':'')+fmt(netProfit)}</td><td></td></tr></tfoot></table>
+  <div class="footer">Roofing (South East) Limited &nbsp;|&nbsp; Co. No. 9804342 &nbsp;|&nbsp; VAT No. 235986564 &nbsp;|&nbsp; Generated by RSE Forecast App ${new Date().toISOString()} &nbsp;|&nbsp; Confidential</div>
+  <script>window.onload=function(){window.print();}<\/script></body></html>`;
+  const win=window.open('','_blank');win.document.write(html);win.document.close();
+}
+
+// ── AI Supplier Proposal Generator ────────────────────────────────────────────
+async function generateSupplierProposal() {
+  const allMonths = getForecastMonths();
+  if (!allMonths.length) { alert('No forecast range selected.'); return; }
+  const cur = getCurrentMonth();
+  const rows = allMonths.map(m => {
+    const mPrev=prevMonth(m),mPrev2=prevMonth(mPrev);
+    let tL=0,tM=0,tO=0,tGrossBilling=0,tRetHeld=0;
+    jobs.forEach(j => {
+      const ms=getEffectiveMonths(j);
+      const hasActuals=Object.keys(j.actuals||{}).some(mo=>{const a=j.actuals[mo];return a&&Object.keys(a).some(f=>a[f]!==undefined&&a[f]!==0);});
+      const useOffset=!hasActuals;
+      if(ms.includes(m)){tL+=buildSchedule(j,'labour')[m]?.value||0;tO+=buildSchedule(j,'overhead')[m]?.value||0;}
+      if(ms.includes(mPrev)) tM+=buildSchedule(j,'materials')[mPrev]?.value||0;
+      const bm=useOffset?(j.paymentTerms===0?m:(j.paymentTerms>=2?mPrev2:mPrev)):m;
+      const pb=getJobBillingForMonth(j,bm);
+      tGrossBilling+=pb.gross;tRetHeld+=pb.ret;
+    });
+    const tC=tL+tM+tO,tLiab=getTotalLiabilitiesForMonth(m),tNetBilling=tGrossBilling-tRetHeld;
+    const cash=tNetBilling+getRetentionReceivedForMonth(m)+getCreditReceivedForMonth(m)-tC-tLiab;
+    return {month:monthLabel(m),isActual:m<cur,netBilling:Math.round(tNetBilling),jobCosts:Math.round(tC),liabilities:Math.round(tLiab),netCashflow:Math.round(cash)};
+  });
+  let rmBil=0,rmCost=0,rmLiab=0;
+  rows.forEach(r=>{rmBil+=r.netBilling;rmCost+=r.jobCosts;rmLiab+=r.liabilities;});
+  const grossProfit=rmBil-rmCost,netProfit=rmBil-rmCost-rmLiab;
+  const rangeLabel=monthLabel(allMonths[0])+' to '+monthLabel(allMonths[allMonths.length-1]);
+  const activeJobsSummary=jobs.filter(j=>j.status==='active').map(j=>{
+    const bs=getSummary(j,'billing');
+    return `${j.name} (${j.client||''}): contract £${Math.round(j.contract).toLocaleString()}, billed £${Math.round(bs.actualSpent).toLocaleString()}, still to bill £${Math.round(bs.balance).toLocaleString()}`;
+  }).join('\n');
+  const dataContext=`ROOFING (SOUTH EAST) LIMITED — FORECAST DATA (${rangeLabel})\n\nKEY METRICS:\n- Net billing in range: £${Math.round(rmBil).toLocaleString()}\n- Total job costs: £${Math.round(rmCost).toLocaleString()}\n- Total liabilities: £${Math.round(rmLiab).toLocaleString()}\n- Forecast gross profit: £${Math.round(grossProfit).toLocaleString()} (${rmBil>0?(grossProfit/rmBil*100).toFixed(1):0}% margin)\n- Forecast net profit: £${Math.round(netProfit).toLocaleString()} (${rmBil>0?(netProfit/rmBil*100).toFixed(1):0}% margin)\n\nACTIVE JOBS:\n${activeJobsSummary}\n\nMONTHLY CASHFLOW:\n${rows.map(r=>`${r.month}: billing £${r.netBilling.toLocaleString()}, costs £${r.jobCosts.toLocaleString()}, net £${r.netCashflow.toLocaleString()} [${r.isActual?'actual':'forecast'}]`).join('\n')}`;
+  const win=window.open('','_blank');
+  win.document.write(`<!DOCTYPE html><html><head><title>Supplier Proposal — Generating...</title><style>body{font-family:Arial,sans-serif;font-size:13px;margin:32px;max-width:800px;color:#1a1a1a}h1{font-size:18px}p{line-height:1.7;margin:8px 0}.status{color:#888;font-style:italic}@media print{button{display:none}}</style></head><body><h1>Roofing (South East) Limited — Supplier Proposal</h1><p class="status" id="status">✦ Generating with AI — please wait...</p><div id="content"></div></body></html>`);
+  win.document.close();
+  try {
+    const res=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({model:'claude-sonnet-4-20250514',max_tokens:1000,messages:[{role:'user',content:`You are helping Stuart Marshall, owner of Roofing (South East) Limited, draft a supplier reassurance letter to Chandlers Roofing Supplies, his largest materials supplier. The letter should: 1. Acknowledge the current outstanding balance without stating a specific figure (Stuart will insert the exact amount). 2. Present the forward billing pipeline as clear evidence of strong cashflow recovery. 3. Propose clearing arrears over 3 months alongside continuing normal trading terms. 4. Mention that a debt restructuring facility is being put in place to strengthen the cashflow position. 5. Be professional, confident and concise — one page maximum. 6. Request continued supply on normal terms during the repayment period. Use this live forecast data:\n${dataContext}\nWrite as a formal business letter from Stuart Marshall to Chandlers. Do not invent figures not in the data above. Sign off as Stuart Marshall, Director, Roofing (South East) Limited.`}]})});
+    const data=await res.json();
+    const text=data.content?.[0]?.text||'No response received.';
+    const formatted=text.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\n\n/g,'</p><p>').replace(/\n/g,'<br>');
+    if(win&&!win.closed){
+      const s=win.document.getElementById('status');if(s){s.textContent='✓ Generated — review and edit before sending. Use Ctrl+P / Cmd+P to save as PDF.';s.style.color='#15803d';}
+      const c=win.document.getElementById('content');
+      if(c) c.innerHTML=`<div style="margin-top:20px;padding:24px;border:1px solid #e5e7eb;border-radius:8px;background:#fafafa"><p>${formatted}</p></div><div style="margin-top:16px"><button onclick="window.print()" style="padding:8px 16px;background:#1d4ed8;color:white;border:none;border-radius:6px;cursor:pointer;font-size:13px">Print / Save as PDF</button></div><p style="font-size:10px;color:#aaa;margin-top:12px">Generated using Claude AI — review carefully before sending. Data as at ${new Date().toLocaleDateString('en-GB')}.</p>`;
+    }
+  } catch(err) {
+    if(win&&!win.closed){const s=win.document.getElementById('status');if(s){s.textContent='✗ Failed: '+err.message;s.style.color='#dc2626';}}
   }
 }
 
