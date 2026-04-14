@@ -141,7 +141,7 @@
     </div>
     <div class="pin-error" id="pin-error"></div>
     <div class="pin-hint">Share this PIN with your accountant</div>
-    <div style="margin-top:1.5rem;font-size:10px;color:#bbb;font-family:monospace">v2.42-Apr-14-11:00</div>
+    <div style="margin-top:1.5rem;font-size:10px;color:#bbb;font-family:monospace">v2.43-Apr-14-12:00</div>
   </div>
 </div>
 
@@ -162,7 +162,7 @@
     </div>
     <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
       <span class="saving" id="saving-indicator"></span>
-      <span style="font-size:10px;color:#bbb;font-family:monospace;user-select:none" title="Build version">v2.42-Apr-14-11:00</span>
+      <span style="font-size:10px;color:#bbb;font-family:monospace;user-select:none" title="Build version">v2.43-Apr-14-12:00</span>
       <button id="btn-job-template" class="btn tab-btn-jobs" style="display:none" onclick="downloadCsvTemplate()">⬇ Job template</button>
       <button id="btn-import-jobs" class="btn tab-btn-jobs" style="display:none" onclick="document.getElementById('csv-file-input').click()">⬆ Import jobs</button>
       <button id="btn-actuals-template" class="btn tab-btn-actuals" style="display:none" onclick="downloadActualsTemplate()">⬇ Actuals template</button>
@@ -2454,8 +2454,49 @@ function renderActualsSection() {
   // Render chart after DOM is set
   const actCtx = document.getElementById('actualsChart');
   if (actCtx) {
+    // Find index of current month in chart labels
+    const curIdx = chartMonths.indexOf(cur);
+
+    // Inline plugin: grey out past, vertical "today" line
+    const pastShadePlugin = {
+      id: 'pastShade',
+      beforeDraw(chart) {
+        const { ctx, chartArea: { left, right, top, bottom }, scales: { x } } = chart;
+        if (!chartArea || curIdx < 0) return;
+        const chartArea = chart.chartArea;
+        // Find pixel position of the boundary between past and present
+        // curIdx is current month — shade everything strictly before it
+        if (curIdx > 0) {
+          const boundaryX = x.getPixelForValue(curIdx - 0.5);
+          ctx.save();
+          ctx.fillStyle = 'rgba(0,0,0,0.045)';
+          ctx.fillRect(chartArea.left, chartArea.top, boundaryX - chartArea.left, chartArea.bottom - chartArea.top);
+          ctx.restore();
+        }
+        // Vertical marker at current month
+        if (curIdx >= 0 && curIdx < chartMonths.length) {
+          const markerX = x.getPixelForValue(curIdx);
+          ctx.save();
+          ctx.strokeStyle = 'rgba(29,78,216,0.5)';
+          ctx.lineWidth = 1.5;
+          ctx.setLineDash([4, 3]);
+          ctx.beginPath();
+          ctx.moveTo(markerX, chartArea.top);
+          ctx.lineTo(markerX, chartArea.bottom);
+          ctx.stroke();
+          // Small label
+          ctx.fillStyle = '#1d4ed8';
+          ctx.font = '10px Helvetica, sans-serif';
+          ctx.textAlign = 'center';
+          ctx.fillText('today', markerX, chartArea.top + 10);
+          ctx.restore();
+        }
+      }
+    };
+
     new Chart(actCtx.getContext('2d'), {
       type: 'line',
+      plugins: [pastShadePlugin],
       data: {
         labels: chartMonths.map(monthLabel),
         datasets: [
@@ -2674,8 +2715,42 @@ function renderForecastSection() {
     <div style="position:relative;width:100%;height:${chartH}px;margin-bottom:1.5rem"><canvas id="forecastChart"></canvas></div>
     <div id="ftable"></div>`;
 
+  const fcCurIdx = allMonths.indexOf(cur);
+  const fcPastShadePlugin = {
+    id: 'fcPastShade',
+    beforeDraw(chart) {
+      const chartArea = chart.chartArea;
+      const { ctx, scales: { x } } = chart;
+      if (!chartArea) return;
+      if (fcCurIdx > 0) {
+        const boundaryX = x.getPixelForValue(fcCurIdx - 0.5);
+        ctx.save();
+        ctx.fillStyle = 'rgba(0,0,0,0.045)';
+        ctx.fillRect(chartArea.left, chartArea.top, boundaryX - chartArea.left, chartArea.bottom - chartArea.top);
+        ctx.restore();
+      }
+      if (fcCurIdx >= 0 && fcCurIdx < allMonths.length) {
+        const markerX = x.getPixelForValue(fcCurIdx);
+        ctx.save();
+        ctx.strokeStyle = 'rgba(29,78,216,0.5)';
+        ctx.lineWidth = 1.5;
+        ctx.setLineDash([4, 3]);
+        ctx.beginPath();
+        ctx.moveTo(markerX, chartArea.top);
+        ctx.lineTo(markerX, chartArea.bottom);
+        ctx.stroke();
+        ctx.fillStyle = '#1d4ed8';
+        ctx.font = '10px Helvetica, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText('today', markerX, chartArea.top + 10);
+        ctx.restore();
+      }
+    }
+  };
+
   forecastChartInst = new Chart(document.getElementById('forecastChart').getContext('2d'), {
     type: 'bar',
+    plugins: [fcPastShadePlugin],
     data: {
       labels: allMonths.map(monthLabel),
       datasets: [
