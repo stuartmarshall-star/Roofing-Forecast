@@ -141,7 +141,7 @@
     </div>
     <div class="pin-error" id="pin-error"></div>
     <div class="pin-hint">Share this PIN with your accountant</div>
-    <div style="margin-top:1.5rem;font-size:10px;color:#bbb;font-family:monospace">v2.55-Apr-15-00:00</div>
+    <div style="margin-top:1.5rem;font-size:10px;color:#bbb;font-family:monospace">v2.58-Apr-15-10:00</div>
   </div>
 </div>
 
@@ -162,7 +162,7 @@
     </div>
     <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
       <span class="saving" id="saving-indicator"></span>
-      <span style="font-size:10px;color:#bbb;font-family:monospace;user-select:none" title="Build version">v2.55-Apr-15-00:00</span>
+      <span style="font-size:10px;color:#bbb;font-family:monospace;user-select:none" title="Build version">v2.58-Apr-15-10:00</span>
       <button id="btn-job-template" class="btn tab-btn-jobs" style="display:none" onclick="downloadCsvTemplate()">⬇ Job template</button>
       <button id="btn-import-jobs" class="btn tab-btn-jobs" style="display:none" onclick="document.getElementById('csv-file-input').click()">⬆ Import jobs</button>
       <button id="btn-actuals-template" class="btn tab-btn-actuals" style="display:none" onclick="downloadActualsTemplate()">⬇ Actuals template</button>
@@ -859,11 +859,18 @@ function buildSchedule(job, field) {
   });
 
   const remaining = Math.max(0, originalTotal - spentActual);
-  // Remaining after overrides spreads across non-override, non-actual future months
-  const remainingAfterOverrides = Math.max(0, remaining - overrideTotal);
-  const spreadMonths = effective.filter(m => !actMonths.has(m) && !activeOverrideMonths.has(m));
+  const remainingMonths = effective.filter(m => !actMonths.has(m));
+
+  // For billing overrides: adjust the reforecast spread to account for override amounts
+  let reforecastPM;
+  if (field === 'billing' && activeOverrideMonths.size > 0) {
+    const spreadMonths = remainingMonths.filter(m => !activeOverrideMonths.has(m));
+    const remainingAfterOverrides = Math.max(0, remaining - overrideTotal);
+    reforecastPM = spreadMonths.length > 0 ? remainingAfterOverrides / spreadMonths.length : 0;
+  } else {
+    reforecastPM = remainingMonths.length > 0 ? remaining / remainingMonths.length : 0;
+  }
   const isComplete = job.status === 'complete';
-  const reforecastPM = spreadMonths.length > 0 ? remainingAfterOverrides / spreadMonths.length : 0;
   const hasActuals = actMonths.size > 0 || hasPreStartDeposit;
   const result = {};
   effective.forEach(m => {
@@ -4063,9 +4070,13 @@ async function qboSync(silent = false) {
       ).join('');
       alert.innerHTML = `<div style="font-weight:600;margin-bottom:6px">⚠ ${a.newProjects.length} new QB project${a.newProjects.length > 1 ? 's' : ''} not yet in the forecast app — add these jobs to include their data:</div>${rows}
         <div style="margin-top:6px"><a href="#" onclick="document.getElementById('qbo-new-projects-alert').remove();return false" style="color:#a16207;font-size:11px">Dismiss</a></div>`;
-      // Insert after header bar
-      const header = document.querySelector('.topbar') || document.querySelector('header') || document.body.firstChild;
-      header.parentNode.insertBefore(alert, header.nextSibling);
+      // Insert after header bar — use correct class and safe fallback
+      const header = document.querySelector('.header') || document.querySelector('header');
+      if (header && header.parentNode) {
+        header.parentNode.insertBefore(alert, header.nextSibling);
+      } else {
+        document.body.insertBefore(alert, document.body.firstElementChild);
+      }
     }
 
     if (data.summary?.accountNames?.length) {
