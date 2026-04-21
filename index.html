@@ -141,7 +141,7 @@
     </div>
     <div class="pin-error" id="pin-error"></div>
     <div class="pin-hint">Share this PIN with your accountant</div>
-    <div style="margin-top:1.5rem;font-size:10px;color:#bbb;font-family:monospace">v2.60-Apr-15-12:00</div>
+    <div style="margin-top:1.5rem;font-size:10px;color:#bbb;font-family:monospace">v2.61-Apr-21-10:00</div>
   </div>
 </div>
 
@@ -162,7 +162,7 @@
     </div>
     <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
       <span class="saving" id="saving-indicator"></span>
-      <span style="font-size:10px;color:#bbb;font-family:monospace;user-select:none" title="Build version">v2.60-Apr-15-12:00</span>
+      <span style="font-size:10px;color:#bbb;font-family:monospace;user-select:none" title="Build version">v2.61-Apr-21-10:00</span>
       <button id="btn-job-template" class="btn tab-btn-jobs" style="display:none" onclick="downloadCsvTemplate()">⬇ Job template</button>
       <button id="btn-import-jobs" class="btn tab-btn-jobs" style="display:none" onclick="document.getElementById('csv-file-input').click()">⬆ Import jobs</button>
       <button id="btn-actuals-template" class="btn tab-btn-actuals" style="display:none" onclick="downloadActualsTemplate()">⬇ Actuals template</button>
@@ -363,9 +363,20 @@
         </select>
       </div>
     </div>
-    <div style="display:flex;align-items:center;gap:10px;margin-bottom:1rem;margin-top:-4px">
-      <input type="checkbox" id="f-cis" style="width:auto;cursor:pointer">
-      <label for="f-cis" style="font-size:13px;color:#1a1a1a;cursor:pointer;margin:0">CIS applicable — contractor deducts 20% CIS on labour (assumed 40% of contract)</label>
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px;margin-top:-4px">
+      <input type="checkbox" id="f-cis" style="width:auto;cursor:pointer" onchange="toggleCisFields()">
+      <label for="f-cis" style="font-size:13px;color:#1a1a1a;cursor:pointer;margin:0">CIS applicable — contractor deducts 20% CIS on labour</label>
+    </div>
+    <div id="f-cis-fields" style="display:none;background:#f0f9ff;border:1px solid #bae6fd;border-radius:8px;padding:10px 14px;margin-bottom:1rem">
+      <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap">
+        <div style="display:flex;align-items:center;gap:8px">
+          <label style="font-size:12px;color:#0369a1;white-space:nowrap;margin:0">Labour % of contract value:</label>
+          <input type="number" id="f-cis-labour-pct" value="40" min="0" max="100" style="width:65px;font-size:12px;padding:4px 6px;border:1px solid #7dd3fc;border-radius:5px;font-family:inherit" oninput="updateCisCalc()">
+          <span style="font-size:12px;color:#0369a1">%</span>
+        </div>
+        <div id="f-cis-calc" style="font-size:12px;color:#0369a1"></div>
+      </div>
+      <div id="f-cis-actual-pct" style="font-size:11px;color:#64748b;margin-top:6px"></div>
     </div>
     <div style="font-size:12px;color:#888;margin-bottom:1rem;margin-top:-6px">First 50% released on job completion. Balance released at end of defects period.</div>
 
@@ -818,19 +829,27 @@ function fmt(n) { return '£' + Math.round(n).toLocaleString('en-GB'); }
 function fmtPct(n) { return (Math.round(n * 10) / 10).toFixed(1) + '%'; }
 
 // Net billing total for a job — contract minus retention, minus effective CIS if applicable.
-// CIS = 20% on labour, assumed at 40% of contract = 8% effective reduction on gross billing.
+// CIS = 20% on labour content of billing. Labour % is set per job (default 40%).
 // Applied to the forecast only — actuals come from QB which already reflects CIS deductions.
 function netBillingTotal(job) {
   const afterRetention = job.contract * (1 - (job.retention || 0) / 100);
   if (!job.cis) return afterRetention;
-  const cisMultiplier = 1 - (0.20 * 0.40); // 0.92
+  const labourPct = (job.cisLabourPct || 40) / 100;
+  const cisMultiplier = 1 - (0.20 * labourPct);
   return afterRetention * cisMultiplier;
+}
+
+// Net labour total for a job — labour budget minus 20% CIS deduction if CIS applicable.
+// We deduct 20% from subbies and pay it to HMRC — actual cash out is 80% of gross labour.
+function netLabourTotal(job) {
+  if (!job.cis) return job.labour;
+  return job.labour * 0.80;
 }
 
 function buildSchedule(job, field) {
   const scheduled = getMonths(job.start, job.dur);
   const effective = getEffectiveMonths(job);
-  const originalTotal = field === 'billing' ? netBillingTotal(job) : job[field];
+  const originalTotal = field === 'billing' ? netBillingTotal(job) : field === 'labour' ? netLabourTotal(job) : job[field];
   let spentActual = 0;
   const actMonths = new Set();
   let hasPreStartDeposit = false;
@@ -908,7 +927,7 @@ function buildSchedule(job, field) {
 
 function getSummary(job, field) {
   const sched = buildSchedule(job, field);
-  const originalTotal = field === 'billing' ? netBillingTotal(job) : job[field];
+  const originalTotal = field === 'billing' ? netBillingTotal(job) : field === 'labour' ? netLabourTotal(job) : job[field];
   let actualSpent = 0;
   Object.keys(sched).forEach(m => { if (sched[m].type === 'actual') actualSpent += sched[m].value; });
   return { originalTotal, actualSpent, balance: Math.max(0, originalTotal - actualSpent), overrun: Math.max(0, actualSpent - originalTotal) };
@@ -925,7 +944,7 @@ function getEffectiveMonths(job) {
   // Check if any field has remaining balance vs scheduled actuals
   const fields = ['billing', 'labour', 'materials', 'overhead'];
   const hasBalance = fields.some(field => {
-    const total = field === 'billing' ? netBillingTotal(job) : job[field];
+    const total = field === 'billing' ? netBillingTotal(job) : field === 'labour' ? netLabourTotal(job) : job[field];
     let spent = 0;
     scheduled.forEach(m => {
       const a = job.actuals[m] && job.actuals[m][field] !== undefined ? job.actuals[m][field] : null;
@@ -951,7 +970,7 @@ function getEffectiveMonths(job) {
 }
 
 function getSummary(job, field) {
-  const originalTotal = field === 'billing' ? netBillingTotal(job) : job[field];
+  const originalTotal = field === 'billing' ? netBillingTotal(job) : field === 'labour' ? netLabourTotal(job) : job[field];
   const sched = buildSchedule(job, field);
   let actualSpent = 0;
   Object.keys(sched).forEach(m => { if (sched[m].type === 'actual') actualSpent += sched[m].value; });
@@ -1268,7 +1287,7 @@ function renderSummary() {
     const inRangeMonths = fromM ? jMonths.filter(m => m >= fromM) : jMonths;
     const fraction = fromM && jMonths.length > 0 ? inRangeMonths.length / jMonths.length : 1;
     totalContract += j.contract * fraction;
-    totalCost     += (j.labour + j.materials + j.overhead) * fraction;
+    totalCost     += (netLabourTotal(j) + j.materials + j.overhead) * fraction;
 
     jMonths.forEach(m => {
       if (fromM && m < fromM) return;
@@ -1326,7 +1345,7 @@ function renderSummary() {
     elapsed.forEach(m => { const a = j.actuals[m]; if (a) { actCost += (a.labour||0)+(a.materials||0)+(a.overhead||0); actBil += a.billing||0; hasAny = true; } });
     if (hasAny) {
       // Total budgeted costs and net contract value
-      const totalBudgetCost = j.labour + j.materials + j.overhead;
+      const totalBudgetCost = netLabourTotal(j) + j.materials + j.overhead;
       const totalNetContract = netBillingTotal(j);
       const fcBil = fcBpm * n;
 
@@ -1494,14 +1513,14 @@ function renderJobsTable() {
         if (a) { actL += a.labour||0; actM += a.materials||0; actO += a.overhead||0; actB += a.billing||0; hasActuals = true; }
       });
       // Use actuals if entered, fall back to budget
-      labour    = hasActuals ? actL : j.labour;
+      labour    = hasActuals ? actL : netLabourTotal(j);
       materials = hasActuals ? actM : j.materials;
       overhead  = hasActuals ? actO : j.overhead;
       // Contract = total billed (actuals billing + retention still held)
       const retHeld = hasActuals ? j.contract * j.retention / 100 : 0;
       contract  = hasActuals ? actB + retHeld : j.contract;
     } else {
-      labour    = j.labour;
+      labour    = netLabourTotal(j);
       materials = j.materials;
       overhead  = j.overhead;
       contract  = j.contract;
@@ -2358,7 +2377,7 @@ function renderActualsSection() {
   // Margin row
   const actCostTotal = labSum.actualSpent + matSum.actualSpent + ovhSum.actualSpent;
   const actBilTotal  = bs.actualSpent;
-  const fcCostTotal  = j.labour + j.materials + j.overhead;
+  const fcCostTotal  = netLabourTotal(j) + j.materials + j.overhead;
   const fcNetBilling = netBillingTotal(j);
   const fcMargin     = fcNetBilling > 0 ? (fcNetBilling - fcCostTotal) / fcNetBilling * 100 : 0;
   const actMargin    = actBilTotal > 0 ? (actBilTotal - actCostTotal) / actBilTotal * 100 : null;
@@ -2394,7 +2413,7 @@ function renderActualsSection() {
 
   // Chart data — original forecast vs actual per month
   const chartMonths = months;
-  const origFcL = j.labour / j.dur;
+  const origFcL = netLabourTotal(j) / j.dur;
   const origFcM = j.materials / j.dur;
   const origFcO = j.overhead / j.dur;
   const origFcB = netBillingTotal(j) / j.dur;
@@ -3840,7 +3859,7 @@ function renderVarianceReport() {
     if (n === 0) return;
 
     // Original forecast per month
-    const fcLpm = j.labour / j.dur;
+    const fcLpm = netLabourTotal(j) / j.dur;
     const fcMpm = j.materials / j.dur;
     const fcOpm = j.overhead / j.dur;
     const fcBpm = netBillingTotal(j) / j.dur;
@@ -3950,7 +3969,7 @@ function renderVarianceReport() {
     jobs.forEach(j => {
       const ms = getMonths(j.start, j.dur);
       if (!ms.includes(m)) return;
-      const fcLpm = j.labour / j.dur, fcMpm = j.materials / j.dur, fcOpm = j.overhead / j.dur;
+      const fcLpm = netLabourTotal(j) / j.dur, fcMpm = j.materials / j.dur, fcOpm = j.overhead / j.dur;
       fcCostM += fcLpm + fcMpm + fcOpm;
       fcBilM  += netBillingTotal(j) / j.dur;
       const a = j.actuals[m];
