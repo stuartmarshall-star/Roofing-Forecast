@@ -141,7 +141,7 @@
     </div>
     <div class="pin-error" id="pin-error"></div>
     <div class="pin-hint">Share this PIN with your accountant</div>
-    <div style="margin-top:1.5rem;font-size:10px;color:#bbb;font-family:monospace">v2.63-Apr-21-12:00</div>
+    <div style="margin-top:1.5rem;font-size:10px;color:#bbb;font-family:monospace">v2.64-Apr-21-13:00</div>
   </div>
 </div>
 
@@ -162,7 +162,7 @@
     </div>
     <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
       <span class="saving" id="saving-indicator"></span>
-      <span style="font-size:10px;color:#bbb;font-family:monospace;user-select:none" title="Build version">v2.63-Apr-21-12:00</span>
+      <span style="font-size:10px;color:#bbb;font-family:monospace;user-select:none" title="Build version">v2.64-Apr-21-13:00</span>
       <button id="btn-job-template" class="btn tab-btn-jobs" style="display:none" onclick="downloadCsvTemplate()">⬇ Job template</button>
       <button id="btn-import-jobs" class="btn tab-btn-jobs" style="display:none" onclick="document.getElementById('csv-file-input').click()">⬆ Import jobs</button>
       <button id="btn-actuals-template" class="btn tab-btn-actuals" style="display:none" onclick="downloadActualsTemplate()">⬇ Actuals template</button>
@@ -224,6 +224,12 @@
           <span style="font-size:12px;color:#888">%</span>
           <span id="fc-cis-actual-pct" style="font-size:11px;color:#6b7280;white-space:nowrap"></span>
         </div>
+      </div>
+      <div>
+        <label style="margin-bottom:4px">CIS status</label>
+        <button id="btn-gross-status" onclick="toggleGrossStatus()"
+          style="display:block;padding:5px 12px;border-radius:6px;border:1px solid;cursor:pointer;font-family:inherit;font-size:12px;font-weight:600;transition:all 0.15s">
+        </button>
       </div>
       <div>
         <button class="btn" onclick="resetForecastControls()">Reset to today</button>
@@ -556,7 +562,8 @@ let fcLength = 12;
 let sumFromMonth = '';
 let appStartMonth = '';
 let fcChartMode = 'bar';
-let cisLabourPct = 40; // app-wide CIS labour % of contract, set on Forecast page // 'bar' | 'line' // shared app-wide start date, set on forecast page
+let cisLabourPct = 40;
+let grossStatus = false; // master switch — when true, all CIS forecasting is suppressed // 'bar' | 'line' // shared app-wide start date, set on forecast page
 
 // ── Persistence helpers ───────────────────────────────────────────────────────
 function savePrefs() {
@@ -565,6 +572,7 @@ function savePrefs() {
     localStorage.setItem('rf_fcLength',     String(fcLength));
     localStorage.setItem('rf_appStart',     appStartMonth || '');
     localStorage.setItem('rf_cisLabourPct', String(cisLabourPct));
+    localStorage.setItem('rf_grossStatus',  String(grossStatus));
   } catch(e) {}
 }
 function loadPrefs() {
@@ -575,6 +583,7 @@ function loadPrefs() {
     appStartMonth = localStorage.getItem('rf_appStart') || fcStartMonth;
     sumFromMonth  = appStartMonth;
     cisLabourPct  = parseFloat(localStorage.getItem('rf_cisLabourPct')) || 40;
+    grossStatus   = localStorage.getItem('rf_grossStatus') === 'true';
   } catch(e) {}
 }
 function getLastSyncTime() {
@@ -833,16 +842,16 @@ function fmtPct(n) { return (Math.round(n * 10) / 10).toFixed(1) + '%'; }
 // Applied to the forecast only — actuals come from QB which already reflects CIS deductions.
 function netBillingTotal(job) {
   const afterRetention = job.contract * (1 - (job.retention || 0) / 100);
-  if (!job.cis) return afterRetention;
-  const labourPct = cisLabourPct / 100; // app-wide setting
+  // Gross status overrides all CIS — treat all billing as gross
+  if (grossStatus || !job.cis) return afterRetention;
+  const labourPct = cisLabourPct / 100;
   const cisMultiplier = 1 - (0.20 * labourPct);
   return afterRetention * cisMultiplier;
 }
 
-// Net labour total for a job — labour budget minus 20% CIS deduction if CIS applicable.
-// We deduct 20% from subbies and pay it to HMRC — actual cash out is 80% of gross labour.
+// Net labour total for a job — 80% of gross if CIS applicable, unless gross status is on.
 function netLabourTotal(job) {
-  if (!job.cis) return job.labour;
+  if (grossStatus || !job.cis) return job.labour;
   return job.labour * 0.80;
 }
 
@@ -2655,7 +2664,37 @@ function initForecastControls() {
   if (lenEl) lenEl.value = fcLength === 'all' ? 'all' : String(fcLength);
   const cisEl = document.getElementById('fc-cis-labour-pct');
   if (cisEl) cisEl.value = String(cisLabourPct);
+  updateGrossStatusBtn();
   updateCisActualPct();
+}
+
+function toggleGrossStatus() {
+  grossStatus = !grossStatus;
+  savePrefs();
+  updateGrossStatusBtn();
+  renderAll();
+}
+
+function updateGrossStatusBtn() {
+  const btn = document.getElementById('btn-gross-status');
+  if (!btn) return;
+  if (grossStatus) {
+    btn.textContent = '✓ Gross status — CIS off';
+    btn.style.background = '#f0fdf4';
+    btn.style.borderColor = '#86efac';
+    btn.style.color = '#15803d';
+  } else {
+    btn.textContent = 'Net status — CIS on';
+    btn.style.background = '#fef9c3';
+    btn.style.borderColor = '#fde047';
+    btn.style.color = '#a16207';
+  }
+  // Grey out CIS labour % input when gross status is active
+  const cisInput = document.getElementById('fc-cis-labour-pct');
+  if (cisInput) {
+    cisInput.disabled = grossStatus;
+    cisInput.style.opacity = grossStatus ? '0.4' : '1';
+  }
 }
 
 function onCisLabourPctChange() {
@@ -3568,7 +3607,7 @@ function openAddJob() {
   document.getElementById('f-status').value = 'active'; document.getElementById('f-moiety').value = '12';
   document.getElementById('f-payment-terms').value = '1';
   document.getElementById('f-existing').checked = false;
-  document.getElementById('f-cis').checked = false;
+  document.getElementById('f-cis').checked = true; // most work is CIS — default on
   document.getElementById('f-existing-fields').style.display = 'none';
   document.getElementById('f-actuals-summary').style.display = 'none';
   document.getElementById('f-retention-calc').textContent = 'Retention held will be calculated automatically';
