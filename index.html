@@ -142,7 +142,7 @@
     </div>
     <div class="pin-error" id="pin-error"></div>
     <div class="pin-hint">Share this PIN with your accountant</div>
-    <div style="margin-top:1.5rem;font-size:10px;color:#bbb;font-family:monospace">v2.73-Apr-22-11:00</div>
+    <div style="margin-top:1.5rem;font-size:10px;color:#bbb;font-family:monospace">v2.74-Apr-22-12:00</div>
   </div>
 </div>
 
@@ -163,7 +163,7 @@
     </div>
     <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
       <span class="saving" id="saving-indicator"></span>
-      <span style="font-size:10px;color:#bbb;font-family:monospace;user-select:none" title="Build version">v2.73-Apr-22-11:00</span>
+      <span style="font-size:10px;color:#bbb;font-family:monospace;user-select:none" title="Build version">v2.74-Apr-22-12:00</span>
       <button id="btn-job-template" class="btn tab-btn-jobs" style="display:none" onclick="downloadCsvTemplate()">⬇ Job template</button>
       <button id="btn-import-jobs" class="btn tab-btn-jobs" style="display:none" onclick="document.getElementById('csv-file-input').click()">⬆ Import jobs</button>
       <button id="btn-actuals-template" class="btn tab-btn-actuals" style="display:none" onclick="downloadActualsTemplate()">⬇ Actuals template</button>
@@ -3217,11 +3217,17 @@ function renderForecastSection() {
     // Totals footer
     const totalGrossMargin = jobDetails.reduce((s, d) => s + d.jNet - d.jCost, 0);
     const totalCredits = creditsThisMonth.reduce((s, c) => s + c.amount, 0);
-    const netBalance = totalGrossMargin + totalCredits - r.tLiab;
+    const netBalance = r.cash; // use pre-calculated cash which includes all components
     detailHtml += `<tr style="border-top:2px solid #ddd;background:#f0f0f0;font-weight:600;font-size:12px">
       <td colspan="6" style="padding:5px 8px">Gross job margin (billing − job costs)</td>
       <td colspan="2" style="text-align:right;padding:5px 8px" class="${totalGrossMargin>=0?'green':'red'}">${totalGrossMargin>=0?'+':''}${fmt(totalGrossMargin)}</td>
     </tr>`;
+    if (r.tUnallocLabour > 0 || r.tUnallocMaterials > 0) {
+      detailHtml += `<tr style="background:#fff7ed;font-size:12px">
+        <td colspan="6" style="padding:4px 8px;color:#c2410c">Less: unallocated costs</td>
+        <td colspan="2" style="text-align:right;padding:4px 8px;color:#c2410c">-${fmt(r.tUnallocLabour + r.tUnallocMaterials)}</td>
+      </tr>`;
+    }
     if (r.tLiab > 0) {
       detailHtml += `<tr style="background:#f5f0ff;font-size:12px">
         <td colspan="6" style="padding:4px 8px;color:#6d28d9">Less: liabilities this month</td>
@@ -3232,6 +3238,12 @@ function renderForecastSection() {
       detailHtml += `<tr style="background:#faf5ff;font-size:12px">
         <td colspan="6" style="padding:4px 8px;color:#6d28d9">Plus: credits received</td>
         <td colspan="2" style="text-align:right;padding:4px 8px;color:#6d28d9">+${fmt(totalCredits)}</td>
+      </tr>`;
+    }
+    if (r.tRetFinal > 0) {
+      detailHtml += `<tr style="background:#f0fdf4;font-size:12px">
+        <td colspan="6" style="padding:4px 8px;color:#15803d">Plus: retention received${r.m >= cur ? ' (scheduled)' : ''}</td>
+        <td colspan="2" style="text-align:right;padding:4px 8px;color:#15803d">+${fmt(r.tRetFinal)}</td>
       </tr>`;
     }
     detailHtml += `<tr style="background:#e8f0fe;font-weight:700;font-size:12px;border-top:1px solid #c7d7f4">
