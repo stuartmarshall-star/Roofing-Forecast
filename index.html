@@ -142,7 +142,7 @@
     </div>
     <div class="pin-error" id="pin-error"></div>
     <div class="pin-hint">Share this PIN with your accountant</div>
-    <div style="margin-top:1.5rem;font-size:10px;color:#bbb;font-family:monospace">v2.72-Apr-22-10:00</div>
+    <div style="margin-top:1.5rem;font-size:10px;color:#bbb;font-family:monospace">v2.73-Apr-22-11:00</div>
   </div>
 </div>
 
@@ -163,7 +163,7 @@
     </div>
     <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
       <span class="saving" id="saving-indicator"></span>
-      <span style="font-size:10px;color:#bbb;font-family:monospace;user-select:none" title="Build version">v2.72-Apr-22-10:00</span>
+      <span style="font-size:10px;color:#bbb;font-family:monospace;user-select:none" title="Build version">v2.73-Apr-22-11:00</span>
       <button id="btn-job-template" class="btn tab-btn-jobs" style="display:none" onclick="downloadCsvTemplate()">⬇ Job template</button>
       <button id="btn-import-jobs" class="btn tab-btn-jobs" style="display:none" onclick="document.getElementById('csv-file-input').click()">⬆ Import jobs</button>
       <button id="btn-actuals-template" class="btn tab-btn-actuals" style="display:none" onclick="downloadActualsTemplate()">⬇ Actuals template</button>
@@ -2863,10 +2863,22 @@ function renderForecastSection() {
     const tRetActual = getRetentionReceivedForMonth(m);
     const tRetFinal = tRetActual > 0 ? tRetActual : (m >= cur ? getTotalRetentionReleaseForMonth(m) : 0);
     const tCreditsReceived = getCreditReceivedForMonth(m);
-    // Add unallocated costs for this month (actuals only — past months)
-    const unalloc = m < cur ? (unallocatedCosts[m] || { labour: 0, materials: 0 }) : { labour: 0, materials: 0 };
-    const tUnallocLabour = unalloc.labour;
-    const tUnallocMaterials = unalloc.materials;
+    // Unallocated costs — labour in month incurred, materials on 30-day lag (same as job materials)
+    // Past months: use actual month's labour + prior month's materials
+    // Current month: pull prior month's unallocated materials (March purchases hit April cashflow)
+    const unallocCur  = unallocatedCosts[m]       || { labour: 0, materials: 0 };
+    const unallocPrev = unallocatedCosts[mPrev]   || { labour: 0, materials: 0 };
+    let tUnallocLabour = 0, tUnallocMaterials = 0;
+    if (m < cur) {
+      // Past month: labour in month, materials lagged from prior month
+      tUnallocLabour    = unallocCur.labour;
+      tUnallocMaterials = unallocPrev.materials;
+    } else if (m === cur) {
+      // Current month: no new unallocated labour (still accumulating), but prior month's materials are due
+      tUnallocLabour    = 0;
+      tUnallocMaterials = unallocPrev.materials;
+    }
+    // Future months: unallocated costs not forecast (no basis for projection)
     const tCTotal = tC + tUnallocLabour + tUnallocMaterials;
     const tNetBilling = tGrossBilling - tRetHeld;
     const cash = tNetBilling + tRetFinal + tCreditsReceived - tCTotal - tLiab;
@@ -3190,11 +3202,15 @@ function renderForecastSection() {
 
     // Unallocated costs from QB bills with no E-number reference
     if (r.tUnallocLabour > 0 || r.tUnallocMaterials > 0) {
+      const unallocNote = r.m === cur
+        ? 'Unallocated purchases from prior month (30-day terms) — no customer reference in QB'
+        : 'CIS labour and purchase bills with no customer reference — consider allocating to a job';
+      const unallocLabel = r.m === cur ? 'Unallocated purchases (prior month)' : 'Unallocated (no project ref)';
       detailHtml += `<tr style="border-top:1px solid #ddd;background:#fff7ed">
-        <td style="padding:4px 8px;font-weight:500;color:#c2410c">Unallocated (no project ref)</td>
+        <td style="padding:4px 8px;font-weight:500;color:#c2410c">${unallocLabel}</td>
         <td style="text-align:right;padding:4px 8px;color:#c2410c">${r.tUnallocLabour>0?fmt(r.tUnallocLabour):'—'}</td>
         <td style="text-align:right;padding:4px 8px;color:#c2410c">${r.tUnallocMaterials>0?fmt(r.tUnallocMaterials):'—'}</td>
-        <td colspan="5" style="padding:4px 8px;font-size:11px;color:#92400e">CIS labour and purchase bills with no customer reference — consider allocating to a job</td>
+        <td colspan="5" style="padding:4px 8px;font-size:11px;color:#92400e">${unallocNote}</td>
       </tr>`;
     }
 
