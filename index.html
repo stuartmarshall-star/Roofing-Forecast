@@ -96,53 +96,44 @@
     .form-grid { grid-template-columns: 1fr; }
     .balance-strip { grid-template-columns: 1fr; }
   }
-  /* PIN lock */
-  #pin-screen { position: fixed; inset: 0; background: #f5f5f5; z-index: 999; display: flex; align-items: center; justify-content: center; }
-  #pin-screen.hidden { display: none; }
-  .pin-card { background: #fff; border-radius: 14px; border: 1px solid #e8e8e8; padding: 2.5rem 2rem; width: min(360px, 92vw); text-align: center; box-shadow: 0 4px 24px rgba(0,0,0,.08); }
-  .pin-card h2 { font-size: 18px; font-weight: 600; margin-bottom: 6px; }
-  .pin-card p { font-size: 13px; color: #888; margin-bottom: 1.75rem; }
-  .pin-dots { display: flex; justify-content: center; gap: 14px; margin-bottom: 1.75rem; }
-  .pin-dot { width: 14px; height: 14px; border-radius: 50%; border: 2px solid #ddd; background: transparent; transition: background .15s, border-color .15s; }
-  .pin-dot.filled { background: #1a1a1a; border-color: #1a1a1a; }
-  .pin-dot.error { background: #dc2626; border-color: #dc2626; }
-  .pin-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; max-width: 240px; margin: 0 auto 1rem; }
-  .pin-btn { padding: 16px; font-size: 18px; font-weight: 500; border: 1px solid #e8e8e8; border-radius: 10px; background: #fff; cursor: pointer; font-family: inherit; transition: background .1s; }
-  .pin-btn:hover { background: #f5f5f5; }
-  .pin-btn:active { background: #e8e8e8; }
-  .pin-btn.del { font-size: 14px; color: #888; }
-  .pin-error { font-size: 13px; color: #dc2626; min-height: 20px; margin-top: 4px; }
-  .pin-hint { font-size: 12px; color: #bbb; margin-top: 1rem; }
+  /* Login */
+  #login-screen { position: fixed; inset: 0; background: #f5f5f5; z-index: 999; display: flex; align-items: center; justify-content: center; }
+  #login-screen.hidden { display: none; }
+  .login-card { background: #fff; border-radius: 14px; border: 1px solid #e8e8e8; padding: 2.5rem 2rem; width: min(360px, 92vw); text-align: center; box-shadow: 0 4px 24px rgba(0,0,0,.08); }
+  .login-card h2 { font-size: 18px; font-weight: 600; margin-bottom: 6px; }
+  .login-card p { font-size: 13px; color: #888; margin-bottom: 1.75rem; }
+  .login-field { text-align: left; margin-bottom: 1rem; }
+  .login-field label { display: block; font-size: 12px; font-weight: 500; color: #888; margin-bottom: 5px; }
+  .login-field input { width: 100%; padding: 12px; font-size: 15px; border: 1px solid #e8e8e8; border-radius: 10px; font-family: inherit; }
+  .login-field input:focus { outline: none; border-color: #1a1a1a; }
+  .login-submit { width: 100%; padding: 14px; font-size: 15px; font-weight: 600; border: none; border-radius: 10px; background: #1a1a1a; color: #fff; cursor: pointer; font-family: inherit; transition: background .1s; }
+  .login-submit:hover { background: #333; }
+  .login-submit:disabled { background: #999; cursor: default; }
+  .login-error { font-size: 13px; color: #dc2626; min-height: 20px; margin-top: 12px; }
+  .login-hint { font-size: 12px; color: #bbb; margin-top: 1rem; }
 </style>
 </head>
 <body>
 
-<!-- PIN lock screen -->
-<div id="pin-screen">
-  <div class="pin-card">
+<!-- Login screen -->
+<div id="login-screen">
+  <div class="login-card">
     <h2>Roofing Forecast</h2>
-    <p>Enter your PIN to continue</p>
-    <div class="pin-dots" id="pin-dots">
-      <div class="pin-dot" id="d0"></div>
-      <div class="pin-dot" id="d1"></div>
-      <div class="pin-dot" id="d2"></div>
-      <div class="pin-dot" id="d3"></div>
-    </div>
-    <div class="pin-grid">
-      <button class="pin-btn" onclick="pinPress('1')">1</button>
-      <button class="pin-btn" onclick="pinPress('2')">2</button>
-      <button class="pin-btn" onclick="pinPress('3')">3</button>
-      <button class="pin-btn" onclick="pinPress('4')">4</button>
-      <button class="pin-btn" onclick="pinPress('5')">5</button>
-      <button class="pin-btn" onclick="pinPress('6')">6</button>
-      <button class="pin-btn" onclick="pinPress('7')">7</button>
-      <button class="pin-btn" onclick="pinPress('8')">8</button>
-      <button class="pin-btn" onclick="pinPress('9')">9</button>
-      <button class="pin-btn" onclick="pinPress('0')" style="grid-column:2">0</button>
-      <button class="pin-btn del" onclick="pinDelete()">⌫</button>
-    </div>
-    <div class="pin-error" id="pin-error"></div>
-    <div style="margin-top:1.5rem;font-size:10px;color:#bbb;font-family:monospace">v2.74-Apr-22-12:00</div>
+    <p>Sign in to continue</p>
+    <form onsubmit="handleLogin(); return false;">
+      <div class="login-field">
+        <label for="login-email">Email</label>
+        <input type="email" id="login-email" autocomplete="username" value="code@forecast.com" autofocus>
+      </div>
+      <div class="login-field">
+        <label for="login-password">Password</label>
+        <input type="password" id="login-password" autocomplete="current-password">
+      </div>
+      <button type="submit" class="login-submit" id="login-btn">Sign in</button>
+    </form>
+    <div class="login-error" id="login-error"></div>
+    <div class="login-hint">Shared login for Stuart &amp; accountant</div>
+    <div style="margin-top:1.5rem;font-size:10px;color:#bbb;font-family:monospace">v2.75-Jun-02</div>
   </div>
 </div>
 
@@ -163,7 +154,7 @@
     </div>
     <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
       <span class="saving" id="saving-indicator"></span>
-      <span style="font-size:10px;color:#bbb;font-family:monospace;user-select:none" title="Build version">v2.74-Apr-22-12:00</span>
+      <span style="font-size:10px;color:#bbb;font-family:monospace;user-select:none" title="Build version">v2.75-Jun-02</span>
       <button id="btn-job-template" class="btn tab-btn-jobs" style="display:none" onclick="downloadCsvTemplate()">⬇ Job template</button>
       <button id="btn-import-jobs" class="btn tab-btn-jobs" style="display:none" onclick="document.getElementById('csv-file-input').click()">⬆ Import jobs</button>
       <button id="btn-actuals-template" class="btn tab-btn-actuals" style="display:none" onclick="downloadActualsTemplate()">⬇ Actuals template</button>
@@ -180,6 +171,7 @@
       <button id="btn-qbo-sync" class="btn" style="background:#0077c5;color:#fff;border-color:#0077c5;display:none" onclick="qboSync()">⟳ Sync from QB</button>
       <span id="qbo-status" style="font-size:11px;color:#888"></span>
       <button class="btn btn-primary" onclick="openAddJob()">+ Add job</button>
+      <button class="btn" onclick="handleLogout()" title="Sign out">Sign out</button>
     </div>
   </div>
 
@@ -440,9 +432,10 @@
 </div>
 
 <script>
-// ── PIN lock ─────────────────────────────────────────────────────────────────
-// To change the PIN, update this value (must be 4 digits)
-const CORRECT_PIN = '1980';
+// ── Authentication (Supabase Auth) ──────────────────────────────
+// The cosmetic PIN gate has been replaced with real, server-enforced auth.
+// Data only loads once a valid session exists; RLS (migration 0002) enforces
+// this on the server. Sessions are created/managed by supabase-js below.
 
 /*
   SUPABASE SETUP — run this SQL in your Supabase SQL Editor if not already done:
@@ -498,77 +491,77 @@ const CORRECT_PIN = '1980';
   alter table jobs add column if not exists payment_terms integer default 1;
 */
 
-let pinEntry = '';
-
-function pinPress(digit) {
-  if (pinEntry.length >= 4) return;
-  pinEntry += digit;
-  updatePinDots();
-  if (pinEntry.length === 4) checkPin();
-}
-
-function pinDelete() {
-  pinEntry = pinEntry.slice(0, -1);
-  updatePinDots();
-  document.getElementById('pin-error').textContent = '';
-}
-
-function updatePinDots(state) {
-  for (let i = 0; i < 4; i++) {
-    const dot = document.getElementById('d' + i);
-    dot.className = 'pin-dot';
-    if (state === 'error') dot.classList.add('error');
-    else if (i < pinEntry.length) dot.classList.add('filled');
-  }
-}
-
-async function checkPin() {
-  if (pinEntry !== CORRECT_PIN) {
-    updatePinDots('error');
-    document.getElementById('pin-error').textContent = 'Incorrect PIN — try again';
-    setTimeout(() => { pinEntry = ''; updatePinDots(); document.getElementById('pin-error').textContent = ''; }, 1200);
-    return;
-  }
-  // PIN correct — now sign in to Supabase to get a real session JWT
-  document.getElementById('pin-error').textContent = 'Signing in...';
-  try {
-    const { data, error } = await sb.auth.signInWithPassword({
-      email: SB_AUTH_EMAIL,
-      password: SB_AUTH_PASSWORD
-    });
-    if (error) throw error;
-    sbSession = data.session;
-    try { sessionStorage.setItem('rf_auth', '1'); } catch(e) {}
-    document.getElementById('pin-error').textContent = '';
-    document.getElementById('pin-screen').classList.add('hidden');
-  } catch (err) {
-    console.error('Auth failed:', err);
-    updatePinDots('error');
-    document.getElementById('pin-error').textContent = 'Sign-in failed — check console';
-    setTimeout(() => { pinEntry = ''; updatePinDots(); document.getElementById('pin-error').textContent = ''; }, 2500);
-  }
-}
-
-// Check if already authenticated this session
-
-
-// Allow keyboard input for PIN
-document.addEventListener('keydown', e => {
-  if (document.getElementById('pin-screen').classList.contains('hidden')) return;
-  if (e.key >= '0' && e.key <= '9') pinPress(e.key);
-  if (e.key === 'Backspace') pinDelete();
-});
-
-// ── Supabase credentials ─────────────────────────────────────────────────────
+// ── Supabase credentials ────────────────────────────────────
 const SB_URL = 'https://asaedxtvehsjmrkdpegj.supabase.co';
 const SB_KEY = 'sb_publishable_IklQe45ab06L_eIrjeUeQg_wifiK9FA';
 const SB_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFzYWVkeHR2ZWhzam1ya2RwZWdqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzM3NjMyMDMsImV4cCI6MjA4OTMzOTIwM30.INMd5nl21PxHv6zQgruIPRXcHy2sELNIsErueXrZ7rI';
 
-// ── Supabase Auth client (for signed-in API calls) ───────────────────────────
-const SB_AUTH_EMAIL = 'stu@forecast.com';
-const SB_AUTH_PASSWORD = 'A8TzjrpuaQz*?Uh';
-const sb = supabase.createClient(SB_URL, SB_ANON_KEY);
-let sbSession = null;  // set after sign-in; holds the JWT for API calls
+// ── Auth client + session state ─────────────────────────────────
+// supabase-js manages sign-in and token refresh. We keep the current session in
+// `currentSession` so the raw-fetch data layer (sbHeaders) can send the user's
+// access token instead of the public key. Data requests then run as the
+// `authenticated` role and are gated by RLS on the server.
+const sbAuth = supabase.createClient(SB_URL, SB_KEY, {
+  auth: { persistSession: true, autoRefreshToken: true, storageKey: 'rf_session' }
+});
+let currentSession = null;
+let appStarted = false;
+
+// Token used for PostgREST/Realtime/edge calls: the user's session token when
+// signed in, otherwise the public key (requests will be rejected by RLS).
+function sbAuthToken() {
+  return (currentSession && currentSession.access_token) || SB_KEY;
+}
+
+async function handleLogin() {
+  const email = document.getElementById('login-email').value.trim();
+  const password = document.getElementById('login-password').value;
+  const errEl = document.getElementById('login-error');
+  const btn = document.getElementById('login-btn');
+  errEl.textContent = '';
+  if (!email || !password) { errEl.textContent = 'Enter your email and password.'; return; }
+  btn.disabled = true; btn.textContent = 'Signing in…';
+  try {
+    const { error } = await sbAuth.auth.signInWithPassword({ email, password });
+    if (error) {
+      errEl.textContent = error.message === 'Invalid login credentials'
+        ? 'Incorrect email or password.' : error.message;
+    }
+    // On success, onAuthStateChange reveals the app.
+  } catch (e) {
+    errEl.textContent = 'Sign-in failed: ' + (e.message || e);
+  } finally {
+    btn.disabled = false; btn.textContent = 'Sign in';
+  }
+}
+
+async function handleLogout() {
+  try { await sbAuth.auth.signOut(); } catch (e) {}
+  // onAuthStateChange shows the login screen again; reload to clear in-memory data.
+  location.reload();
+}
+
+function showLogin() { document.getElementById('login-screen').classList.remove('hidden'); }
+function hideLogin() { document.getElementById('login-screen').classList.add('hidden'); }
+
+// Single entry point for booting the app — runs only once, only when signed in.
+function startApp() {
+  if (appStarted) return;
+  appStarted = true;
+  loadPrefs();
+  initForecastControls();
+  renderAll();
+  loadJobs();
+  qboCheckConnection().then(() => autoSyncIfDue());
+}
+
+// Drives all auth transitions, including the restored session on page load
+// (fires INITIAL_SESSION). This is the only place that reveals/hides the app.
+sbAuth.auth.onAuthStateChange((event, session) => {
+  currentSession = session;
+  if (session) { hideLogin(); startApp(); }
+  else { showLogin(); }
+});
 
 let jobs = [];
 let liabilities = [];
@@ -619,11 +612,14 @@ function setLastSyncTime() {
 
 // ── Supabase helpers ─────────────────────────────────────────────────────────
 function sbHeaders() {
-  const token = (sbSession && sbSession.access_token) ? sbSession.access_token : SB_KEY;
+  // apikey identifies the project to the gateway; Authorization carries the
+  // logged-in user's session token so PostgREST runs the request as the
+  // `authenticated` role (subject to RLS). Falls back to the public key when
+  // signed out, in which case RLS will reject the request.
   return {
     'Content-Type': 'application/json',
     'apikey': SB_KEY,
-    'Authorization': 'Bearer ' + token,
+    'Authorization': 'Bearer ' + sbAuthToken(),
     'Prefer': 'return=representation'
   };
 }
@@ -798,7 +794,7 @@ function setupRealtime() {
   try {
     const wsUrl = SB_URL.replace('https://', 'wss://') + '/realtime/v1/websocket?apikey=' + SB_KEY + '&vsn=1.0.0';
     const ws = new WebSocket(wsUrl);
-    ws.onopen = () => ws.send(JSON.stringify({ topic: 'realtime:public:jobs', event: 'phx_join', payload: {}, ref: '1' }));
+    ws.onopen = () => ws.send(JSON.stringify({ topic: 'realtime:public:jobs', event: 'phx_join', payload: { access_token: sbAuthToken() }, ref: '1' }));
     ws.onmessage = async (e) => {
       const msg = JSON.parse(e.data);
       if (['INSERT','UPDATE','DELETE'].includes(msg.event)) {
@@ -4191,18 +4187,24 @@ function renderVarianceReport() {
 const QBO_FUNCTIONS_BASE = SB_URL + '/functions/v1';
 
 async function qboCheckConnection() {
+  // The client must never read QBO tokens. Connection status is reported by the
+  // qbo-sync edge function (service-role), which checks qbo_credentials for us.
   try {
-    const res = await fetch(SB_URL + '/rest/v1/settings?key=eq.qbo_tokens&select=value', {
-      headers: sbHeaders()
+    const res = await fetch(QBO_FUNCTIONS_BASE + '/qbo-sync', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + sbAuthToken() },
+      body: JSON.stringify({ check: true })
     });
-    const data = await res.json();
-    const connected = Array.isArray(data) && data.length > 0 && !!data[0].value;
+    const data = await res.json().catch(() => ({}));
+    const connected = res.ok && data && data.connected === true;
     document.getElementById('btn-qbo-connect').style.display = connected ? 'none' : 'inline-flex';
     document.getElementById('btn-qbo-sync').style.display    = connected ? 'inline-flex' : 'none';
     document.getElementById('qbo-status').textContent        = connected ? '✓ QB connected' : '';
+    return connected;
   } catch {
     document.getElementById('btn-qbo-connect').style.display = 'inline-flex';
     document.getElementById('btn-qbo-sync').style.display    = 'none';
+    return false;
   }
 }
 
@@ -4211,7 +4213,7 @@ async function qboConnect() {
   statusEl.textContent = 'Opening QuickBooks authorisation...';
   try {
     const res = await fetch(QBO_FUNCTIONS_BASE + '/qbo-auth', {
-      headers: { 'Authorization': 'Bearer ' + SB_ANON_KEY }
+      headers: { 'Authorization': 'Bearer ' + sbAuthToken() }
     });
     const text = await res.text();
     console.log('qbo-auth response status:', res.status, 'body:', text);
@@ -4230,17 +4232,14 @@ async function qboConnect() {
         // Check if popup closed
         if (popup && popup.closed) {
           clearInterval(timer);
-          // Check if tokens were stored
-          const res2 = await fetch(SB_URL + '/rest/v1/settings?key=eq.qbo_tokens&select=value', { headers: sbHeaders() });
-          const data2 = await res2.json();
-          const connected = Array.isArray(data2) && data2.length > 0 && !!data2[0].value;
+          // Ask the edge function whether tokens were stored — the client never
+          // reads the tokens itself.
+          const connected = await qboCheckConnection();
           if (connected) {
             statusEl.textContent = '✓ QB connected — syncing...';
-            await qboCheckConnection();
             await qboSync();
           } else {
             statusEl.textContent = 'Connection cancelled or failed — please try again';
-            await qboCheckConnection();
           }
         }
       } catch(e) {
@@ -4268,7 +4267,7 @@ async function qboSync(silent = false) {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': 'Bearer ' + SB_ANON_KEY
+        'Authorization': 'Bearer ' + sbAuthToken()
       },
       body: JSON.stringify({ lastSyncTime: getLastSyncTime() })
     });
@@ -4371,7 +4370,7 @@ async function autoSyncIfDue() {
     try {
       const res = await fetch(QBO_FUNCTIONS_BASE + '/qbo-sync', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + SB_ANON_KEY }
+        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + sbAuthToken() }
       });
       if (res.ok) {
         const statusEl = document.getElementById('qbo-status');
@@ -4481,7 +4480,7 @@ async function generateSupplierProposal() {
   win.document.write(`<!DOCTYPE html><html><head><title>Supplier Proposal — Generating...</title><style>body{font-family:Arial,sans-serif;font-size:13px;margin:32px;max-width:800px;color:#1a1a1a}h1{font-size:18px}p{line-height:1.7;margin:8px 0}.status{color:#888;font-style:italic}@media print{button{display:none}}</style></head><body><h1>Roofing (South East) Limited — Supplier Proposal</h1><p class="status" id="status">✦ Generating with AI — please wait...</p><div id="content"></div></body></html>`);
   win.document.close();
   try {
-    const res=await fetch(QBO_FUNCTIONS_BASE+'/AI-function',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+SB_ANON_KEY},body:JSON.stringify({dataContext})});
+    const res=await fetch(QBO_FUNCTIONS_BASE+'/AI-function',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+sbAuthToken()},body:JSON.stringify({dataContext})});
     const data=await res.json();
     if(!data.success) throw new Error(data.error||'Proposal generation failed');
     const text=data.text||'No response received.';
@@ -4497,13 +4496,9 @@ async function generateSupplierProposal() {
 }
 
 // Start
-document.addEventListener('DOMContentLoaded', () => {
-  loadPrefs();
-  initForecastControls();
-  renderAll();
-  loadJobs();
-  qboCheckConnection().then(() => autoSyncIfDue());
-});
+// App boot is driven by auth state: sbAuth.auth.onAuthStateChange() calls
+// startApp() once a valid session exists (including the session restored on
+// page load). Nothing loads here, so no data is fetched until signed in.
 </script>
 </body>
 </html>
