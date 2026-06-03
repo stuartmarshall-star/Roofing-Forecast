@@ -133,7 +133,7 @@
     </form>
     <div class="login-error" id="login-error"></div>
     <div class="login-hint">Shared login for Stuart &amp; accountant</div>
-    <div style="margin-top:1.5rem;font-size:10px;color:#bbb;font-family:monospace">v2.75-Jun-02</div>
+    <div style="margin-top:1.5rem;font-size:10px;color:#bbb;font-family:monospace">v2.76-Jun-03</div>
   </div>
 </div>
 
@@ -154,7 +154,7 @@
     </div>
     <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
       <span class="saving" id="saving-indicator"></span>
-      <span style="font-size:10px;color:#bbb;font-family:monospace;user-select:none" title="Build version">v2.75-Jun-02</span>
+      <span style="font-size:10px;color:#bbb;font-family:monospace;user-select:none" title="Build version">v2.76-Jun-03</span>
       <button id="btn-job-template" class="btn tab-btn-jobs" style="display:none" onclick="downloadCsvTemplate()">⬇ Job template</button>
       <button id="btn-import-jobs" class="btn tab-btn-jobs" style="display:none" onclick="document.getElementById('csv-file-input').click()">⬆ Import jobs</button>
       <button id="btn-actuals-template" class="btn tab-btn-actuals" style="display:none" onclick="downloadActualsTemplate()">⬇ Actuals template</button>
@@ -327,6 +327,16 @@
   <div class="modal">
     <div class="modal-title" id="modal-title">Add job</div>
     <div class="form-grid">
+      <div><label>Job type</label>
+        <select id="f-job-type" onchange="onJobTypeChange()">
+          <option value="contract">Contract works</option>
+          <option value="small">Small works (deposit / lagged start)</option>
+        </select>
+      </div>
+      <div></div>
+      <div></div>
+    </div>
+    <div class="form-grid">
       <!-- TODO: Add required attribute and asterisk label to f-name, f-client -->
       <!-- f-name should pre-populate from QB E-number when triggered from new project alert -->
       <div><label>Job reference</label><input id="f-name" placeholder="e.g. RF-2025-001"></div>
@@ -334,14 +344,23 @@
       <div><label>Project name</label><input id="f-project" placeholder="e.g. 14 Mill Lane reroofing"></div>
     </div>
     <div class="form-grid">
-      <div><label>Status</label><select id="f-status"><option value="active">Active</option><option value="future">Future</option><option value="complete">Complete</option></select></div>
-      <!-- TODO: f-start and f-dur should be required. f-start could pre-populate from QB CreateTime month -->
-      <div><label>Start month</label><input type="text" id="f-start" placeholder="MM/YY" style="width:100px"></div>
+      <!-- Status is derived automatically (future if start is ahead, else active; complete/paused are set from the actuals tab) -->
+      <div><label id="f-start-label">Start month</label><input type="text" id="f-start" placeholder="MM/YY" style="width:100px"></div>
       <div><label>Duration (months)</label><input type="number" id="f-dur" min="1" max="240" value="3"><div id="f-dur-lock" style="display:none"></div></div>
+      <div></div>
+    </div>
+    <div id="f-smallworks-fields" style="display:none">
+      <div class="sub-label">Deposit / advance payment</div>
+      <div class="form-grid">
+        <div><label>Deposit / order month</label><input type="text" id="f-deposit-month" placeholder="MM/YY" style="width:100px"></div>
+        <div><label>Deposit amount (£) — optional</label><input type="number" id="f-deposit-amount" placeholder="auto from QB"></div>
+        <div></div>
+      </div>
+      <div style="font-size:12px;color:#888;margin-bottom:1rem;margin-top:-6px">Deposit lands in this month — often before site work starts. Set <strong>Project start</strong> to when work begins; the spread starts there, so lead-time months aren't forecast. <strong>Leave the amount blank</strong> to let QB fill it from the deposit invoice — enter it only to forecast a deposit before it's raised in QB. For payment-on-receipt deposits set <strong>Payment terms → Same month</strong>.</div>
     </div>
     <div class="form-grid">
       <!-- TODO: f-contract should be required — no forecast is possible without a contract value -->
-      <div><label>Contracted value (£)</label><input type="number" id="f-contract" placeholder="0" oninput="updateRetentionCalc()"></div>
+      <div><label>Contracted value (£)</label><input type="number" id="f-contract" placeholder="0"></div>
       <div></div>
       <div></div>
     </div>
@@ -355,7 +374,7 @@
     </div>
     <div class="sub-label">Billing &amp; payment</div>
     <div class="form-grid">
-      <div><label>Retention % held by client</label><input type="number" id="f-retention" value="5" min="0" max="100" oninput="updateRetentionCalc()"></div>
+      <div><label>Retention % held by client</label><input type="number" id="f-retention" value="5" min="0" max="100" oninput="onRetentionChange()"></div>
       <div><label>Payment terms</label>
         <select id="f-payment-terms">
           <option value="0">Same month (on invoice)</option>
@@ -363,7 +382,7 @@
           <option value="2">45 days following month</option>
         </select>
       </div>
-      <div><label>Defects period</label>
+      <div id="f-defects-wrap"><label>Defects period</label>
         <select id="f-moiety">
           <option value="12">12 months</option>
           <option value="24">24 months</option>
@@ -371,38 +390,11 @@
       </div>
     </div>
     <div style="display:flex;align-items:center;gap:10px;margin-bottom:1rem;margin-top:-4px">
-      <input type="checkbox" id="f-cis" style="width:auto;cursor:pointer">
-      <label for="f-cis" style="font-size:13px;color:#1a1a1a;cursor:pointer;margin:0">CIS applicable — contractor deducts 20% CIS on labour</label>
+      <input type="checkbox" id="f-domestic" style="width:auto;cursor:pointer">
+      <label for="f-domestic" style="font-size:13px;color:#1a1a1a;cursor:pointer;margin:0">Domestic client — no CIS deducted (untick for contractor / CIS jobs)</label>
     </div>
-    <div style="font-size:12px;color:#888;margin-bottom:1rem;margin-top:-6px">First 50% released on job completion. Balance released at end of defects period.</div>
+    <div id="f-defects-note" style="font-size:12px;color:#888;margin-bottom:1rem;margin-top:-6px">First 50% released on job completion. Balance released at end of defects period.</div>
 
-    <div id="f-actuals-summary" style="display:none;margin-bottom:1rem"></div>
-
-    <!-- Existing contract toggle -->
-    <div style="border-top:0.5px solid #e8e8e8;padding-top:1rem;margin-bottom:.75rem;display:flex;align-items:center;gap:10px">
-      <input type="checkbox" id="f-existing" style="width:auto;cursor:pointer" onchange="toggleExistingFields()">
-      <label for="f-existing" style="font-size:13px;font-weight:500;color:#1a1a1a;cursor:pointer;margin:0">Backfill past months with totals-to-date</label>
-    </div>
-    <div id="f-existing-fields" style="display:none">
-      <div style="background:#fef9c3;border:1px solid #fde68a;border-radius:8px;padding:10px 14px;margin-bottom:1rem;font-size:12px;color:#a16207">
-        Enter totals <strong>paid or received to date</strong>. These will be spread evenly across past months <strong>that don't already have actuals entered</strong> — months with existing actuals are preserved.<br>
-        <strong>Labour &amp; overhead:</strong> total cash paid to date.&nbsp;
-        <strong>Materials:</strong> total paid to end of last full month.&nbsp;
-        <strong>Billing:</strong> cash actually received in your bank.
-      </div>
-      <div class="sub-label">Costs paid to date (£ cash out)</div>
-      <div class="form-grid">
-        <div><label>Labour paid to date</label><input type="number" id="f-labour-to-date" placeholder="0"></div>
-        <div><label>Materials paid to date</label><input type="number" id="f-materials-to-date" placeholder="0"></div>
-        <div><label>Overhead paid to date</label><input type="number" id="f-overhead-to-date" placeholder="0"></div>
-      </div>
-      <div class="sub-label">Billing received to date (£ cash in)</div>
-      <div class="form-grid">
-        <div><label>Cash received to date (gross)</label><input type="number" id="f-billed-to-date" placeholder="0" oninput="updateRetentionCalc()"></div>
-        <div style="padding-top:1.5rem;font-size:12px;color:#888" id="f-retention-calc">Retention held will be calculated automatically</div>
-        <div></div>
-      </div>
-    </div>
     <div class="modal-footer">
       <button class="btn" onclick="closeModal()">Cancel</button>
       <button class="btn btn-primary" onclick="saveJob()">Save job</button>
@@ -647,7 +639,11 @@ function dbToJob(row) {
     retentionInvoiceDates: row.retention_invoice_dates || {},
     retentionInvoiceAmounts: row.retention_invoice_amounts || {},
     actuals: row.actuals || {},
-    billingOverrides: row.billing_overrides || {}
+    billingOverrides: row.billing_overrides || {},
+    jobType: row.job_type || 'contract',
+    depositAmount: parseFloat(row.deposit_amount) || 0,
+    depositMonth: row.deposit_month || '',
+    paused: row.paused === true
   };
 }
 
@@ -664,7 +660,11 @@ function jobToDb(j) {
     retention_invoice_dates: j.retentionInvoiceDates || {},
     retention_invoice_amounts: j.retentionInvoiceAmounts || {},
     actuals: j.actuals,
-    billing_overrides: j.billingOverrides || {}
+    billing_overrides: j.billingOverrides || {},
+    job_type: j.jobType || 'contract',
+    deposit_amount: j.depositAmount || null,
+    deposit_month: j.depositMonth || null,
+    paused: j.paused || false
   };
 }
 
@@ -864,6 +864,16 @@ function getCurrentMonth() {
 function fmt(n) { return '£' + Math.round(n).toLocaleString('en-GB'); }
 function fmtPct(n) { return (Math.round(n * 10) / 10).toFixed(1) + '%'; }
 
+// Derived job status. 'complete' and 'paused' are explicit (set from the actuals tab);
+// otherwise a job is 'future' until its start month arrives, then 'active'.
+function jobStatus(j) {
+  if (j.status === 'complete') return 'complete';
+  if (j.paused) return 'paused';
+  return j.start > getCurrentMonth() ? 'future' : 'active';
+}
+// Active = started, not complete, not paused — the set that drives portfolio/at-risk/PDF.
+function isActive(j) { return jobStatus(j) === 'active'; }
+
 // Net billing total for a job — contract minus retention, minus effective CIS if applicable.
 // CIS = 20% on labour content of billing. Labour % is set per job (default 40%).
 // Applied to the forecast only — actuals come from QB which already reflects CIS deductions.
@@ -906,15 +916,26 @@ function buildSchedule(job, field) {
         }
       });
     }
+    // Small-works expected deposit (the negotiated figure entered at job setup) draws down
+    // the billing spread up front, until the real deposit lands via QB — see depositRealised().
+    if (job.jobType === 'small' && job.depositAmount > 0 && job.depositMonth && !depositRealised(job)) {
+      spentActual += job.depositAmount;
+      hasPreStartDeposit = true;
+    }
   }
+  const cur = getCurrentMonth();
   scheduled.forEach(m => {
     const a = job.actuals[m] && job.actuals[m][field] !== undefined ? job.actuals[m][field] : null;
-    if (a !== null) { spentActual += a; actMonths.add(m); }
+    if (a !== null) {
+      // Current-month cost actuals are only partial ("so far") — don't lock them into the
+      // spread; the current month is blended (so-far + remaining forecast) in the output loop.
+      if (field !== 'billing' && m === cur) return;
+      spentActual += a; actMonths.add(m);
+    }
   });
 
   // For billing: also account for overrides in next 2 forecast months
   const overrides = (field === 'billing' && job.billingOverrides) ? job.billingOverrides : {};
-  const cur = getCurrentMonth();
   const nextMonth = addMonths(cur, 1);
   const afterNext = addMonths(cur, 2);
   const overrideMonths = new Set([nextMonth, afterNext]);
@@ -930,7 +951,10 @@ function buildSchedule(job, field) {
   });
 
   const remaining = Math.max(0, originalTotal - spentActual);
-  const remainingMonths = effective.filter(m => !actMonths.has(m));
+  // Spread the remaining balance over CURRENT/FUTURE open months only. A past month
+  // with no actual (m < cur) is forced to 0 in the output loop below, so including it
+  // here would silently steal its share of the balance and drop it from the forecast.
+  const remainingMonths = effective.filter(m => !actMonths.has(m) && m >= cur);
 
   // For billing overrides: adjust the reforecast spread to account for override amounts
   let reforecastPM;
@@ -946,8 +970,19 @@ function buildSchedule(job, field) {
   const result = {};
   effective.forEach(m => {
     const a = job.actuals[m] && job.actuals[m][field] !== undefined ? job.actuals[m][field] : null;
+    // Current-month COST: blend real spend-so-far with the rest of the month's forecast, so the
+    // live month never understates committed costs. A paused/complete job shows just what's spent.
+    if (field !== 'billing' && m === cur) {
+      const soFar = a !== null ? a : 0;
+      const fc = (job.paused || isComplete) ? 0 : (hasActuals ? reforecastPM : originalTotal / effective.length);
+      result[m] = { value: Math.max(soFar, fc), type: (soFar > 0 && soFar >= fc) ? 'actual' : (job.paused ? 'paused' : 'reforecast') };
+      return;
+    }
     if (a !== null) {
       result[m] = { value: a, type: 'actual' };
+    } else if (job.paused) {
+      // Job on hold — frozen: only recorded actuals show, no forecast in any month
+      result[m] = { value: 0, type: 'paused' };
     } else if (isComplete && field !== 'billing') {
       result[m] = { value: 0, type: 'complete' };
     } else if (m < cur && hasActuals) {
@@ -976,7 +1011,7 @@ function getSummary(job, field) {
 // Calculates balance directly (not via getSummary) to avoid circular dependency
 function getEffectiveMonths(job) {
   const scheduled = getMonths(job.start, job.dur);
-  if (job.status === 'complete') return scheduled;
+  if (job.status === 'complete' || job.paused) return scheduled;
   const cur = getCurrentMonth();
   const lastMonth = scheduled[scheduled.length - 1];
   if (lastMonth >= cur) return scheduled;
@@ -1315,7 +1350,7 @@ function renderSummary() {
   sumFromMonth = fromM; // keep in sync
 
   let totalContract=0, totalCost=0, totalActCost=0, totalActBilling=0, totalHeld=0, totalReleased=0;
-  const activeJobs = jobs.filter(j => j.status === 'active');
+  const activeJobs = jobs.filter(isActive);
   jobs.forEach(j => {
     // If a from-filter is set, skip jobs that end before fromM
     const jMonths = getMonths(j.start, j.dur);
@@ -1347,7 +1382,7 @@ function renderSummary() {
 
   // ── Jobs at risk ────────────────────────────────────────────────────────────
   const atRisk = [];
-  jobs.filter(j => j.status === 'active').forEach(j => {
+  jobs.filter(isActive).forEach(j => {
     const months = getMonths(j.start, j.dur);
     const lastMonth = months[months.length - 1];
     const elapsed = months.filter(m => m < cur);
@@ -2275,6 +2310,15 @@ async function undoJobComplete(idx) {
   await dbSave(j);
 }
 
+async function togglePause(idx) {
+  const j = jobs[idx];
+  const pausing = !j.paused;
+  if (pausing && !confirm('Pause the forecast for "' + j.name + '"? Future billing and costs will be frozen (recorded actuals are kept) until you resume.')) return;
+  j.paused = pausing;
+  renderAll();
+  await dbSave(j);
+}
+
 function setActual(jobIdx, month, field, val) {
   if (!jobs[jobIdx].actuals[month]) jobs[jobIdx].actuals[month] = {};
   const n = parseFloat(val);
@@ -2347,7 +2391,9 @@ function renderActualsSection() {
     + '</div>'
     + '<div style="display:flex;gap:8px;flex-wrap:wrap">'
     + '<button class="btn btn-sm" onclick="editJob(' + activeActualsJob + ')">Edit job details</button>'
-    + (j.status === 'active' ? '<button class="btn btn-sm" style="background:#f0fdf4;border-color:#86efac;color:#15803d" onclick="markJobComplete(' + activeActualsJob + ')">✓ Mark complete</button>' : '')
+    + (j.status !== 'complete' ? '<button class="btn btn-sm" style="background:#f0fdf4;border-color:#86efac;color:#15803d" onclick="markJobComplete(' + activeActualsJob + ')">✓ Mark complete</button>' : '')
+    + (j.status !== 'complete' && !j.paused ? '<button class="btn btn-sm" style="background:#fff7ed;border-color:#fdba74;color:#c2410c" onclick="togglePause(' + activeActualsJob + ')">⏸ Pause forecast</button>' : '')
+    + (j.paused ? '<span style="background:#fff7ed;border:1px solid #fdba74;color:#c2410c;padding:4px 10px;border-radius:6px;font-size:12px;font-weight:500">⏸ Paused</span> <button class="btn btn-sm" onclick="togglePause(' + activeActualsJob + ')">▶ Resume forecast</button>' : '')
     + (j.status === 'complete' ? '<span style="background:#f0fdf4;border:1px solid #86efac;color:#15803d;padding:4px 10px;border-radius:6px;font-size:12px;font-weight:500">✓ Complete</span> <button class="btn btn-sm" style="background:#fef9c3;border-color:#fde68a;color:#a16207" onclick="undoJobComplete(' + activeActualsJob + ')">Undo complete</button>' : '')
     + '<button class="btn btn-sm" onclick="downloadJobPDF(' + activeActualsJob + ')" style="background:#f8f8f8">⬇ PDF</button>'
     + '</div></div>';
@@ -2697,7 +2743,10 @@ function getForecastMonths() {
     let earliest = null, latest = null;
     jobs.forEach(j => {
       const ms = getEffectiveMonths(j);
-      if (!earliest || ms[0] < earliest) earliest = ms[0];
+      // A small-works deposit can land before the project start — pull the window back to it
+      let jStart = ms[0];
+      if (j.jobType === 'small' && j.depositAmount > 0 && j.depositMonth && j.depositMonth < jStart) jStart = j.depositMonth;
+      if (!earliest || jStart < earliest) earliest = jStart;
       // Only extend end by payment terms for new jobs with no actuals
       const hasActuals = Object.keys(j.actuals || {}).some(mo => {
         const a = j.actuals[mo];
@@ -2882,6 +2931,8 @@ function renderForecastSection() {
     const tRetActual = getRetentionReceivedForMonth(m);
     const tRetFinal = tRetActual > 0 ? tRetActual : (m >= cur ? getTotalRetentionReleaseForMonth(m) : 0);
     const tCreditsReceived = getCreditReceivedForMonth(m);
+    // Expected (forecast) small-works deposits — shown until the real deposit syncs from QB
+    const tDepositExpected = getTotalExpectedDepositForMonth(m);
     // Unallocated costs — labour in month incurred, materials on 30-day lag (same as job materials)
     // Past months: use actual month's labour + prior month's materials
     // Current month: pull prior month's unallocated materials (March purchases hit April cashflow)
@@ -2900,8 +2951,8 @@ function renderForecastSection() {
     // Future months: unallocated costs not forecast (no basis for projection)
     const tCTotal = tC + tUnallocLabour + tUnallocMaterials;
     const tNetBilling = tGrossBilling - tRetHeld;
-    const cash = tNetBilling + tRetFinal + tCreditsReceived - tCTotal - tLiab;
-    return {m, tL, tM, tO, tC, tCTotal, tGrossBilling, tRetHeld, tNetBilling, tLiab, tRetFinal, tCreditsReceived, cash, tUnallocLabour, tUnallocMaterials};
+    const cash = tNetBilling + tRetFinal + tCreditsReceived + tDepositExpected - tCTotal - tLiab;
+    return {m, tL, tM, tO, tC, tCTotal, tGrossBilling, tRetHeld, tNetBilling, tLiab, tRetFinal, tCreditsReceived, tDepositExpected, cash, tUnallocLabour, tUnallocMaterials};
   });
 
   if (forecastChartInst) { forecastChartInst.destroy(); forecastChartInst = null; }
@@ -2915,7 +2966,7 @@ function renderForecastSection() {
     rmTotalCost     += r.tCTotal;
     rmTotalLiab     += r.tLiab;
     rmTotalRet      += r.tRetFinal;
-    rmTotalCredits  += r.tCreditsReceived;
+    rmTotalCredits  += r.tCreditsReceived + r.tDepositExpected;
     // Actuals = past months only
     if (r.m < cur) {
       jobs.forEach(j => {
@@ -3100,7 +3151,7 @@ function renderForecastSection() {
   }
 
   let totL=0,totM=0,totO=0,totGross=0,totRetHeld=0,totLiab=0,totRetRec=0,totCredRec=0,totUnallocL=0,totUnallocM=0;
-  rows.forEach(r=>{totL+=r.tL;totM+=r.tM;totO+=r.tO;totGross+=r.tGrossBilling;totRetHeld+=r.tRetHeld;totLiab+=r.tLiab;totRetRec+=r.tRetFinal;totCredRec+=r.tCreditsReceived;totUnallocL+=r.tUnallocLabour;totUnallocM+=r.tUnallocMaterials;});
+  rows.forEach(r=>{totL+=r.tL;totM+=r.tM;totO+=r.tO;totGross+=r.tGrossBilling;totRetHeld+=r.tRetHeld;totLiab+=r.tLiab;totRetRec+=r.tRetFinal;totCredRec+=r.tCreditsReceived+r.tDepositExpected;totUnallocL+=r.tUnallocLabour;totUnallocM+=r.tUnallocMaterials;});
   const totC=totL+totM+totO+totUnallocL+totUnallocM;
   const totNet=totGross-totRetHeld;
   const totCash=totNet+totRetRec+totCredRec-totC-totLiab;
@@ -3172,7 +3223,7 @@ function renderForecastSection() {
       <td><strong>${fmt(r.tCTotal + r.tLiab)}</strong><div style="font-size:11px;color:#888">L:${fmt(r.tL)} M:${fmt(r.tM)} O:${fmt(r.tO)}${r.tUnallocLabour>0?' +UL:'+fmt(r.tUnallocLabour):''}${r.tUnallocMaterials>0?' +UM:'+fmt(r.tUnallocMaterials):''}${r.tLiab>0?' Liab:'+fmt(r.tLiab):''}</div></td>
       <td><strong>${fmt(r.tNetBilling)}</strong><div style="font-size:11px;color:#888">Gross:${fmt(r.tGrossBilling)}${r.tRetHeld>0?' Ret:-'+fmt(r.tRetHeld):''}</div></td>
       <td>${retRecCell}</td>
-      <td>${r.tCreditsReceived > 0 ? `<span style="color:#6d28d9;font-weight:600">+${fmt(r.tCreditsReceived)}</span>` : '<span style="color:#ccc">—</span>'}</td>
+      <td>${(r.tCreditsReceived + r.tDepositExpected) > 0 ? `<span style="color:#6d28d9;font-weight:600">+${fmt(r.tCreditsReceived + r.tDepositExpected)}</span>${r.tDepositExpected > 0 ? '<span style="font-size:10px;color:#888;margin-left:4px">deposit</span>' : ''}` : '<span style="color:#ccc">—</span>'}</td>
       <td class="${r.cash>=0?'green':'red'}"><strong>${r.cash>=0?'+':''}${fmt(r.cash)}</strong></td>
       <td class="${cumulative>=0?'green':'red'}" style="font-style:italic;opacity:0.85">${cumulative>=0?'+':''}${fmt(cumulative)}</td>
     </tr>`;
@@ -3479,6 +3530,29 @@ function getCreditReceivedForMonth(m) {
   return credits.filter(c => c.received && c.receivedMonth === m).reduce((s, c) => s + c.amount, 0);
 }
 
+// True once a small-works job's deposit has actually landed — either as a linked QB deposit
+// credit (received), or as a recorded billing actual in the deposit month. Used to stop the
+// expected/planning deposit from double-counting once the real money is in the figures.
+function depositRealised(j) {
+  if (j.jobType !== 'small' || !j.depositAmount || !j.depositMonth) return false;
+  const hasActualCredit = typeof credits !== 'undefined' && credits.some(c =>
+    c.category === 'deposit' && c.linkedJobRef === j.name && c.received);
+  const a = j.actuals[j.depositMonth];
+  const hasBillingActual = a && a.billing !== undefined && a.billing !== 0;
+  return hasActualCredit || hasBillingActual;
+}
+
+// Expected (forecast) deposit cash for a job in a given month — the negotiated deposit shown
+// before the real one syncs from QB. Returns 0 once the deposit is realised (no double-count).
+function getJobExpectedDepositForMonth(j, month) {
+  if (j.jobType !== 'small' || !j.depositAmount || j.depositMonth !== month) return 0;
+  return depositRealised(j) ? 0 : j.depositAmount;
+}
+
+function getTotalExpectedDepositForMonth(month) {
+  return jobs.reduce((s, j) => s + getJobExpectedDepositForMonth(j, month), 0);
+}
+
 function renderCreditsSection() {
   const el = document.getElementById('credits');
   if (!el) return;
@@ -3708,33 +3782,35 @@ function showTab(id) {
   document.querySelectorAll('.tab-btn-credits').forEach(b => b.style.display = id === 'credits' ? '' : 'none');
 }
 
-function toggleExistingFields() {
-  const show = document.getElementById('f-existing').checked;
-  document.getElementById('f-existing-fields').style.display = show ? 'block' : 'none';
+function onJobTypeChange() {
+  const isSmall = document.getElementById('f-job-type').value === 'small';
+  document.getElementById('f-smallworks-fields').style.display = isSmall ? 'block' : 'none';
+  const lbl = document.getElementById('f-start-label');
+  if (lbl) lbl.textContent = isSmall ? 'Project start (forecast begins)' : 'Start month';
+  // Default CIS by type: small/domestic work usually has no CIS, contract work does.
+  // Only when adding — on edit the job's saved value is applied after this call.
+  if (editIdx === null) document.getElementById('f-domestic').checked = isSmall;
 }
 
-function updateRetentionCalc() {
-  const billed = parseFloat(document.getElementById('f-billed-to-date').value) || 0;
-  const retPct = parseFloat(document.getElementById('f-retention').value) || 0;
-  const held = billed * retPct / 100;
-  document.getElementById('f-retention-calc').textContent = held > 0
-    ? `Retention held: £${Math.round(held).toLocaleString('en-GB')} (${retPct}% of ${fmt(billed)})`
-    : 'Retention held will be calculated automatically';
+// Defects period (retention release schedule) only matters when retention is held.
+function onRetentionChange() {
+  const ret = parseFloat(document.getElementById('f-retention').value) || 0;
+  const wrap = document.getElementById('f-defects-wrap');
+  const note = document.getElementById('f-defects-note');
+  if (wrap) wrap.style.visibility = ret > 0 ? 'visible' : 'hidden';
+  if (note) note.style.display = ret > 0 ? 'block' : 'none';
 }
 
 function openAddJob() {
   editIdx = null;
   document.getElementById('modal-title').textContent = 'Add job';
   ['f-name','f-client','f-project','f-labour','f-materials','f-overhead','f-contract',
-   'f-labour-to-date','f-materials-to-date','f-overhead-to-date','f-billed-to-date'].forEach(id => document.getElementById(id).value = '');
+   'f-deposit-amount','f-deposit-month'].forEach(id => document.getElementById(id).value = '');
   document.getElementById('f-dur').value = 3; document.getElementById('f-retention').value = 5;
-  document.getElementById('f-status').value = 'active'; document.getElementById('f-moiety').value = '12';
+  document.getElementById('f-moiety').value = '12';
   document.getElementById('f-payment-terms').value = '1';
-  document.getElementById('f-existing').checked = false;
-  document.getElementById('f-cis').checked = true; // most work is CIS — default on
-  document.getElementById('f-existing-fields').style.display = 'none';
-  document.getElementById('f-actuals-summary').style.display = 'none';
-  document.getElementById('f-retention-calc').textContent = 'Retention held will be calculated automatically';
+  document.getElementById('f-job-type').value = 'contract'; onJobTypeChange();
+  onRetentionChange();
   const now = new Date(); document.getElementById('f-start').value = fmtMonthInput(now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0'));
   refreshClientDatalist();
   document.getElementById('modal-backdrop').classList.add('open');
@@ -3781,10 +3857,15 @@ function editJob(idx) {
   document.getElementById('f-start').value = fmtMonthInput(j.start); document.getElementById('f-dur').value = j.dur;
   document.getElementById('f-contract').value = j.contract; document.getElementById('f-labour').value = j.labour;
   document.getElementById('f-materials').value = j.materials; document.getElementById('f-overhead').value = j.overhead;
-  document.getElementById('f-retention').value = j.retention; document.getElementById('f-status').value = j.status;
+  document.getElementById('f-retention').value = j.retention;
   document.getElementById('f-moiety').value = String(j.moiety || 12);
   document.getElementById('f-payment-terms').value = String(j.paymentTerms || 1);
-  document.getElementById('f-cis').checked = j.cis || false;
+  document.getElementById('f-job-type').value = j.jobType || 'contract';
+  document.getElementById('f-deposit-amount').value = j.depositAmount || '';
+  document.getElementById('f-deposit-month').value = j.depositMonth ? fmtMonthInput(j.depositMonth) : '';
+  onJobTypeChange();
+  document.getElementById('f-domestic').checked = !j.cis;
+  onRetentionChange();
 
   // Calculate minimum allowable duration — must be enough months to cover any remaining balance
   // This applies whether the job has ended or is still active
@@ -3838,43 +3919,6 @@ function editJob(idx) {
     if (durLockEl) durLockEl.style.display = 'none';
   }
 
-  // Calculate current actuals totals
-  const months = getMonths(j.start, j.dur);
-  const elapsedMonths = months.filter(m => m < cur);
-  let totL=0, totM=0, totO=0, totNetB=0, hasActuals=false;
-  elapsedMonths.forEach(m => {
-    const a = j.actuals[m];
-    if (a) {
-      totL  += a.labour    || 0;
-      totM  += a.materials || 0;
-      totO  += a.overhead  || 0;
-      totNetB += a.billing || 0;
-      if (Object.keys(a).length > 0) hasActuals = true;
-    }
-  });
-  const totGrossB = j.retention < 100 ? totNetB / (1 - j.retention / 100) : totNetB;
-
-  // Don't auto-check the backfill box — only show it if user explicitly wants to overwrite actuals
-  document.getElementById('f-existing').checked = false;
-  document.getElementById('f-existing-fields').style.display = 'none';
-  document.getElementById('f-labour-to-date').value   = hasActuals ? Math.round(totL)  : '';
-  document.getElementById('f-materials-to-date').value = hasActuals ? Math.round(totM)  : '';
-  document.getElementById('f-overhead-to-date').value  = hasActuals ? Math.round(totO)  : '';
-  document.getElementById('f-billed-to-date').value    = hasActuals ? Math.round(totGrossB) : '';
-  updateRetentionCalc();
-
-  // Show actuals summary
-  const summaryEl = document.getElementById('f-actuals-summary');
-  if (hasActuals) {
-    summaryEl.style.display = 'block';
-    summaryEl.innerHTML = '<div style="background:#dbeafe;border:1px solid #93c5fd;border-radius:8px;padding:10px 14px;font-size:12px;color:#1d4ed8">'
-      + '<strong>Editing historical figures</strong> — the fields below show your current recorded totals. '
-      + 'Tick the backfill checkbox to recalculate actuals across elapsed months.</div>';
-  } else {
-    summaryEl.style.display = 'none';
-  }
-
-  document.getElementById('f-retention-calc').textContent = 'Retention held will be calculated automatically';
   document.getElementById('modal-backdrop').classList.add('open');
 }
 
@@ -3902,7 +3946,6 @@ async function saveJob() {
   //   if (contractVal <= 0) { alert('Please enter a contract value.'); return; }
   // This validation should also fire when a job is pre-populated from a QB new project alert.
 
-  const isExisting = document.getElementById('f-existing').checked;
   const startVal = parseMonthInput(document.getElementById('f-start').value);
   const durEl = document.getElementById('f-dur');
   let durVal = parseInt(durEl.value) || 1;
@@ -3914,61 +3957,20 @@ async function saveJob() {
   }
   const retPct = parseFloat(document.getElementById('f-retention').value) || 0;
 
-  // Build actuals — preserve any individually-entered actuals; only backfill if checkbox ticked
-  // Start from existing actuals on edit, empty on new
+  // Preserve any individually-entered actuals. Start from existing actuals on edit, empty on new.
   let actuals = editIdx !== null ? { ...jobs[editIdx].actuals } : {};
 
-  if (isExisting) {
-    const cur = getCurrentMonth();
-    const allJobMonths = getMonths(startVal, durVal);
-    // Only backfill months strictly before current that don't already have manually entered actuals
-    const elapsedMonths = allJobMonths.filter(m => m < cur);
-
-    if (elapsedMonths.length > 0) {
-      const n = elapsedMonths.length;
-      const labToDate = parseFloat(document.getElementById('f-labour-to-date').value)    || 0;
-      const matToDate = parseFloat(document.getElementById('f-materials-to-date').value) || 0;
-      const ovhToDate = parseFloat(document.getElementById('f-overhead-to-date').value)  || 0;
-      const bilToDate = parseFloat(document.getElementById('f-billed-to-date').value)    || 0;
-      const netBilToDate = bilToDate * (1 - retPct / 100);
-
-      // How much is already covered by existing actuals
-      let existingL=0, existingM=0, existingO=0, existingB=0;
-      const monthsWithActuals = new Set();
-      elapsedMonths.forEach(m => {
-        const a = actuals[m];
-        if (a && Object.keys(a).some(k => !k.startsWith('_') && a[k] !== undefined)) {
-          existingL += a.labour    || 0;
-          existingM += a.materials || 0;
-          existingO += a.overhead  || 0;
-          existingB += a.billing   || 0;
-          monthsWithActuals.add(m);
-        }
-      });
-
-      // Only fill months that don't yet have actuals
-      const monthsToFill = elapsedMonths.filter(m => !monthsWithActuals.has(m));
-      if (monthsToFill.length > 0) {
-        const nFill = monthsToFill.length;
-        const labPM = Math.max(0, labToDate - existingL) / nFill;
-        const matPM = Math.max(0, matToDate - existingM) / nFill;
-        const ovhPM = Math.max(0, ovhToDate - existingO) / nFill;
-        const bilPM = Math.max(0, netBilToDate - existingB) / nFill;
-        monthsToFill.forEach(m => {
-          if (!actuals[m]) actuals[m] = {};
-          actuals[m].labour    = labPM;
-          actuals[m].materials = matPM;
-          actuals[m].overhead  = ovhPM;
-          actuals[m].billing   = bilPM;
-        });
-      }
-    }
-  }
+  const jobType = document.getElementById('f-job-type').value === 'small' ? 'small' : 'contract';
+  const depositMonth  = parseMonthInput(document.getElementById('f-deposit-month').value);
+  const depositAmount = parseFloat(document.getElementById('f-deposit-amount').value) || 0;
 
   const job = {
     id: editIdx !== null ? jobs[editIdx].id : undefined,
     name, client: document.getElementById('f-client').value.trim(),
     projectName: document.getElementById('f-project').value.trim(),
+    jobType,
+    depositAmount: jobType === 'small' ? depositAmount : 0,
+    depositMonth:  jobType === 'small' ? depositMonth  : '',
     start: startVal,
     dur: durVal,
     contract: parseFloat(document.getElementById('f-contract').value) || 0,
@@ -3978,8 +3980,9 @@ async function saveJob() {
     retention: retPct,
     moiety: parseInt(document.getElementById('f-moiety').value) || 12,
     paymentTerms: parseInt(document.getElementById('f-payment-terms').value) || 1,
-    cis: document.getElementById('f-cis').checked,
-    status: document.getElementById('f-status').value,
+    cis: !document.getElementById('f-domestic').checked,
+    status: (editIdx !== null && jobs[editIdx].status === 'complete') ? 'complete' : (startVal > getCurrentMonth() ? 'future' : 'active'),
+    paused: editIdx !== null ? (jobs[editIdx].paused || false) : false,
     retentionReleases: editIdx !== null ? (jobs[editIdx].retentionReleases || { m1: false, m2: false }) : { m1: false, m2: false },
     retentionReceivedDates: editIdx !== null ? (jobs[editIdx].retentionReceivedDates || {}) : {},
     retentionInvoiceDates: editIdx !== null ? (jobs[editIdx].retentionInvoiceDates || {}) : {},
@@ -4412,7 +4415,7 @@ function exportForecastPDF() {
   const grossProfit=rmBil-rmCost,netProfit=rmBil+rmRet-rmCost-rmLiab;
   const grossMargin=rmBil>0?grossProfit/rmBil*100:0,netMargin=rmBil>0?netProfit/rmBil*100:0;
   const rangeLabel=monthLabel(allMonths[0])+' – '+monthLabel(allMonths[allMonths.length-1]);
-  const activeJobs=jobs.filter(j=>j.status==='active');
+  const activeJobs=jobs.filter(isActive);
   const activeJobRows=activeJobs.map(j=>{
     const bs=getSummary(j,'billing');
     const pct=bs.originalTotal>0?bs.actualSpent/bs.originalTotal*100:0;
@@ -4471,7 +4474,7 @@ async function generateSupplierProposal() {
   rows.forEach(r=>{rmBil+=r.netBilling;rmCost+=r.jobCosts;rmLiab+=r.liabilities;});
   const grossProfit=rmBil-rmCost,netProfit=rmBil-rmCost-rmLiab;
   const rangeLabel=monthLabel(allMonths[0])+' to '+monthLabel(allMonths[allMonths.length-1]);
-  const activeJobsSummary=jobs.filter(j=>j.status==='active').map(j=>{
+  const activeJobsSummary=jobs.filter(isActive).map(j=>{
     const bs=getSummary(j,'billing');
     return `${j.name} (${j.client||''}): contract £${Math.round(j.contract).toLocaleString()}, billed £${Math.round(bs.actualSpent).toLocaleString()}, still to bill £${Math.round(bs.balance).toLocaleString()}`;
   }).join('\n');
