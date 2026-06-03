@@ -133,7 +133,7 @@
     </form>
     <div class="login-error" id="login-error"></div>
     <div class="login-hint">Shared login for Stuart &amp; accountant</div>
-    <div style="margin-top:1.5rem;font-size:10px;color:#bbb;font-family:monospace">v2.76-Jun-03</div>
+    <div style="margin-top:1.5rem;font-size:10px;color:#bbb;font-family:monospace">v2.77-Jun-03</div>
   </div>
 </div>
 
@@ -154,7 +154,7 @@
     </div>
     <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
       <span class="saving" id="saving-indicator"></span>
-      <span style="font-size:10px;color:#bbb;font-family:monospace;user-select:none" title="Build version">v2.76-Jun-03</span>
+      <span style="font-size:10px;color:#bbb;font-family:monospace;user-select:none" title="Build version">v2.77-Jun-03</span>
       <button id="btn-job-template" class="btn tab-btn-jobs" style="display:none" onclick="downloadCsvTemplate()">⬇ Job template</button>
       <button id="btn-import-jobs" class="btn tab-btn-jobs" style="display:none" onclick="document.getElementById('csv-file-input').click()">⬆ Import jobs</button>
       <button id="btn-actuals-template" class="btn tab-btn-actuals" style="display:none" onclick="downloadActualsTemplate()">⬇ Actuals template</button>
@@ -1411,6 +1411,19 @@ function renderSummary() {
       });
     }
 
+    // ── Flag: needs billing — active job on 30+ day terms with no application due this month ──
+    if (j.paymentTerms >= 1 && lastMonth >= cur) {
+      const curBilling = (j.actuals[cur] && j.actuals[cur].billing) || (j.billingOverrides && j.billingOverrides[cur]) || 0;
+      const hasBilledBefore = elapsed.some(m => j.actuals[m] && j.actuals[m].billing > 0);
+      if (!curBilling && hasBilledBefore) {
+        risks.push({
+          type: 'needs-billing',
+          label: 'No application recorded as due this month (' + monthLabel(cur) + ') — raise or chase it',
+          severity: 'medium'
+        });
+      }
+    }
+
     // ── Flag 3: cost overrun vs total budget ────────────────────────────────
     if (!elapsed.length) { if (risks.length) atRisk.push({ j, risks }); return; }
     const n = elapsed.length;
@@ -1427,6 +1440,13 @@ function renderSummary() {
       const costOverrun = actCost - totalBudgetCost;
       if (costOverrun > totalBudgetCost * 0.05) {
         risks.push({ type: 'cost', label: 'Total costs ' + fmt(actCost) + ' exceed budget of ' + fmt(totalBudgetCost) + ' — overrun of ' + fmt(costOverrun), severity: costOverrun > totalBudgetCost * 0.15 ? 'high' : 'medium' });
+      }
+
+      // ── Flag: costs running ahead of plan (pace) — early warning before the whole budget is gone ──
+      const expectedCostByNow = totalBudgetCost * (n / j.dur);
+      const costPaceAhead = actCost - expectedCostByNow;
+      if (costOverrun <= totalBudgetCost * 0.05 && expectedCostByNow > 0 && costPaceAhead > expectedCostByNow * 0.20) {
+        risks.push({ type: 'cost-pace', label: 'Costs running ahead of plan — ' + fmt(actCost) + ' spent vs ~' + fmt(expectedCostByNow) + ' expected by month ' + n + ' of ' + j.dur + ' (+' + fmt(costPaceAhead) + ')', severity: costPaceAhead > expectedCostByNow * 0.4 ? 'high' : 'medium' });
       }
 
       // Billing behind prorated forecast (timing check — this one prorated makes sense)
@@ -1495,9 +1515,11 @@ function renderSummary() {
   } else {
     // Group by risk type
     const categories = [
+      { key: 'needs-billing', label: 'Needs billing — no application due this month', icon: '🟠' },
       { key: 'billing-overrun', label: 'Billing outstanding past end date', icon: '🔴' },
       { key: 'costs-after-billing', label: 'Billing complete — costs still forecast', icon: '🟡' },
       { key: 'cost', label: 'Cost overrun vs total budget', icon: '🔴' },
+      { key: 'cost-pace', label: 'Costs running ahead of plan', icon: '🟡' },
       { key: 'billing', label: 'Billing behind forecast', icon: '🟡' },
       { key: 'margin', label: 'Billing behind costs — recovery suggested', icon: '🟡' },
     ];
