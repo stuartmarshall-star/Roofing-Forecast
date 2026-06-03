@@ -133,7 +133,7 @@
     </form>
     <div class="login-error" id="login-error"></div>
     <div class="login-hint">Shared login for Stuart &amp; accountant</div>
-    <div style="margin-top:1.5rem;font-size:10px;color:#bbb;font-family:monospace">v2.77-Jun-03</div>
+    <div style="margin-top:1.5rem;font-size:10px;color:#bbb;font-family:monospace">v2.78-Jun-03</div>
   </div>
 </div>
 
@@ -154,7 +154,7 @@
     </div>
     <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
       <span class="saving" id="saving-indicator"></span>
-      <span style="font-size:10px;color:#bbb;font-family:monospace;user-select:none" title="Build version">v2.77-Jun-03</span>
+      <span style="font-size:10px;color:#bbb;font-family:monospace;user-select:none" title="Build version">v2.78-Jun-03</span>
       <button id="btn-job-template" class="btn tab-btn-jobs" style="display:none" onclick="downloadCsvTemplate()">⬇ Job template</button>
       <button id="btn-import-jobs" class="btn tab-btn-jobs" style="display:none" onclick="document.getElementById('csv-file-input').click()">⬆ Import jobs</button>
       <button id="btn-actuals-template" class="btn tab-btn-actuals" style="display:none" onclick="downloadActualsTemplate()">⬇ Actuals template</button>
@@ -3790,6 +3790,34 @@ async function deleteCredit(idx) {
   await dbDeleteCredit(id);
 }
 
+// ── QB unmatched-jobs: capture outstanding retention / ignore ─────────────────
+async function ignoreProjectSilently(eNum) {
+  // Persist to the ignore list so qbo-sync stops surfacing this E-number on future syncs
+  try { await sbFetch('qbo_ignored_projects', { method: 'POST', body: JSON.stringify({ enum: eNum }) }); }
+  catch (e) { /* already ignored / duplicate key — fine */ }
+}
+
+async function ignoreProject(eNum, btnEl) {
+  await ignoreProjectSilently(eNum);
+  const row = (btnEl && btnEl.closest('[data-unmatched-row]')) || document.getElementById('unmatched-' + eNum);
+  if (row) row.remove();
+}
+
+async function captureRetention(p, btnEl) {
+  // Pre-fill a retention credit for the outstanding amount; user sets the expected month then saves
+  openAddCredit();
+  document.getElementById('cr-name').value   = 'Retention — ' + p.eNum + (p.name ? ' (' + p.name + ')' : '');
+  document.getElementById('cr-cat').value    = 'retention';
+  document.getElementById('cr-amount').value = p.amount || '';
+  document.getElementById('cr-notes').value  = 'Outstanding retention from QuickBooks' + (p.client ? ' · ' + p.client : '') + ' — set the month you expect it back.';
+  document.getElementById('cr-month').value  = '';
+  toggleCreditJobLink();
+  // Stop nagging about this old job on future syncs (it's now being tracked)
+  await ignoreProjectSilently(p.eNum);
+  const row = (btnEl && btnEl.closest('[data-unmatched-row]')) || document.getElementById('unmatched-' + p.eNum);
+  if (row) row.remove();
+}
+
 function renderAll() {
   renderSummary(); renderJobsTable(); renderActualsSection(); renderVarianceReport();
   renderLiabilitiesSection(); renderRetentionsSection(); renderCreditsSection(); renderForecastSection();
@@ -4349,18 +4377,24 @@ async function qboSync(silent = false) {
       if (existing) existing.remove();
       const alert = document.createElement('div');
       alert.id = 'qbo-unmatched-alert';
-      alert.style.cssText = 'margin:8px 16px;padding:10px 14px;background:#fef2f2;border:1px solid #fecaca;border-radius:8px;font-size:12px;color:#dc2626';
-      const rows = data.unmatchedActive.map(p =>
-        `<div style="display:flex;justify-content:space-between;align-items:center;padding:5px 0;border-bottom:1px solid #fecaca;gap:12px">
-          <span><b>${p.eNum}</b>${p.client ? ' — ' + p.client : ''} ${p.name ? '<span style="color:#888">(' + p.name + ')</span>' : ''}</span>
-          <span style="display:flex;align-items:center;gap:8px;flex-shrink:0">
-            <span style="color:#888;font-size:11px">First activity: ${p.firstActivity}</span>
-            <button onclick="addJobFromQB(${JSON.stringify(p).replace(/"/g,'&quot;')})" style="padding:3px 10px;font-size:11px;background:#dc2626;color:white;border:none;border-radius:5px;cursor:pointer;font-family:inherit">+ Add to app</button>
+      alert.style.cssText = 'margin:8px 16px;padding:10px 14px;background:#fff7ed;border:1px solid #fed7aa;border-radius:8px;font-size:12px;color:#9a3412';
+      const rows = data.unmatchedActive.map(p => {
+        const ret = p.outstandingRetention || 0;
+        const retLine = ret > 0 ? ' · <b style="color:#0f766e">' + fmt(ret) + ' retention outstanding</b>' : '';
+        const lastAct = p.lastActivity || p.firstActivity || '';
+        const cp = JSON.stringify({ eNum: p.eNum, name: p.name, client: p.client, amount: ret }).replace(/"/g, '&quot;');
+        return `<div data-unmatched-row id="unmatched-${p.eNum}" style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid #fed7aa;gap:12px;flex-wrap:wrap">
+          <span><b>${p.eNum}</b>${p.client ? ' — ' + p.client : ''} ${p.name ? '<span style="color:#888">(' + p.name + ')</span>' : ''}
+            <div style="font-size:11px;color:#888">Activity ${p.firstActivity} → ${lastAct}${retLine}</div></span>
+          <span style="display:flex;align-items:center;gap:6px;flex-shrink:0;flex-wrap:wrap">
+            ${ret > 0 ? `<button onclick="captureRetention(${cp}, this)" style="padding:3px 10px;font-size:11px;background:#0f766e;color:white;border:none;border-radius:5px;cursor:pointer;font-family:inherit">Capture retention</button>` : ''}
+            <button onclick="ignoreProject('${p.eNum}', this)" style="padding:3px 10px;font-size:11px;background:#6b7280;color:white;border:none;border-radius:5px;cursor:pointer;font-family:inherit">Ignore</button>
+            <button onclick="addJobFromQB(${JSON.stringify(p).replace(/"/g,'&quot;')})" style="padding:3px 10px;font-size:11px;background:#1d4ed8;color:white;border:none;border-radius:5px;cursor:pointer;font-family:inherit">+ Add to app</button>
           </span>
-        </div>`
-      ).join('');
-      alert.innerHTML = `<div style="font-weight:600;margin-bottom:6px">🔴 ${data.unmatchedActive.length} E-number${data.unmatchedActive.length > 1 ? 's' : ''} with activity since Nov 2025 not in the app — these costs and income are missing from your forecast:</div>${rows}
-        <div style="margin-top:6px"><a href="#" onclick="document.getElementById('qbo-unmatched-alert').remove();return false" style="color:#dc2626;font-size:11px">Dismiss</a></div>`;
+        </div>`;
+      }).join('');
+      alert.innerHTML = `<div style="font-weight:600;margin-bottom:6px">🟠 ${data.unmatchedActive.length} QB E-number${data.unmatchedActive.length > 1 ? 's' : ''} not in the app — capture any outstanding retention, ignore old/finished ones (won't ask again), or add as a job:</div>${rows}
+        <div style="margin-top:6px"><a href="#" onclick="document.getElementById('qbo-unmatched-alert').remove();return false" style="color:#9a3412;font-size:11px">Dismiss for now</a></div>`;
       const header = document.querySelector('.header') || document.querySelector('header');
       if (header && header.parentNode) {
         header.parentNode.insertBefore(alert, header.nextSibling);
