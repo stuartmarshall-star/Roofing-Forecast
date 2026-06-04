@@ -13,7 +13,13 @@
   .header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 1.5rem; }
   .header-left h1 { font-size: 20px; font-weight: 600; }
   .header-left p { font-size: 13px; color: #666; margin-top: 2px; }
-  .tabs { display: flex; gap: 2px; margin-bottom: 1.5rem; background: #f0f0f0; border-radius: 10px; padding: 4px; }
+  /* Primary navigation — top-level groups */
+  .nav-primary { display: flex; gap: 6px; margin-bottom: .6rem; flex-wrap: wrap; }
+  .navp { padding: 9px 22px; font-size: 14px; font-weight: 600; cursor: pointer; border: none; border-radius: 8px; color: #6b7280; background: transparent; font-family: inherit; transition: background .15s, color .15s; white-space: nowrap; }
+  .navp:hover { background: #ececec; color: #1a1a1a; }
+  .navp.active { background: #1a1a1a; color: #fff; }
+  /* Secondary navigation — sub-tabs within the active group */
+  .tabs { display: flex; gap: 2px; margin-bottom: 1.5rem; background: #f0f0f0; border-radius: 10px; padding: 4px; flex-wrap: wrap; }
   .tab { padding: 9px 18px; font-size: 13px; font-weight: 500; cursor: pointer; border: none; border-radius: 7px; color: #666; background: transparent; font-family: inherit; transition: background .15s, color .15s; white-space: nowrap; }
   .tab:hover { background: rgba(255,255,255,.7); color: #1a1a1a; }
   .tab.active { background: #fff; color: #1a1a1a; box-shadow: 0 1px 4px rgba(0,0,0,.1); font-weight: 600; }
@@ -91,6 +97,12 @@
   .modal-title { font-size: 16px; font-weight: 600; margin-bottom: 1.25rem; }
   .modal-footer { display: flex; gap: 10px; justify-content: flex-end; margin-top: 1.25rem; }
   .sub-label { font-size: 13px; font-weight: 500; color: #888; margin-bottom: 8px; }
+  /* Info-hover tooltip — replaces inline explanatory grey text */
+  .infotip { position: relative; display: inline-flex; align-items: center; justify-content: center; width: 14px; height: 14px; border-radius: 50%; background: #cbd5e1; color: #fff; font-size: 10px; font-weight: 700; font-style: normal; cursor: help; margin-left: 5px; vertical-align: middle; line-height: 1; flex-shrink: 0; }
+  .infotip:hover { background: #1d4ed8; }
+  .infotip > .infotip-bubble { visibility: hidden; opacity: 0; position: absolute; bottom: calc(100% + 8px); left: 50%; transform: translateX(-50%); background: #1f2937; color: #f3f4f6; font-size: 12px; font-weight: 400; text-align: left; line-height: 1.45; padding: 8px 10px; border-radius: 7px; width: max-content; max-width: 260px; white-space: normal; box-shadow: 0 6px 20px rgba(0,0,0,.18); z-index: 200; transition: opacity .12s, visibility .12s; pointer-events: none; }
+  .infotip > .infotip-bubble::after { content: ''; position: absolute; top: 100%; left: 50%; transform: translateX(-50%); border: 5px solid transparent; border-top-color: #1f2937; }
+  .infotip:hover > .infotip-bubble { visibility: visible; opacity: 1; }
   @media (max-width: 640px) {
     .metric-row { grid-template-columns: repeat(2, 1fr); }
     .form-grid { grid-template-columns: 1fr; }
@@ -133,7 +145,7 @@
     </form>
     <div class="login-error" id="login-error"></div>
     <div class="login-hint">Shared login for Stuart &amp; accountant</div>
-    <div style="margin-top:1.5rem;font-size:10px;color:#bbb;font-family:monospace">v2.81-Jun-04</div>
+    <div style="margin-top:1.5rem;font-size:10px;color:#bbb;font-family:monospace">v2.82-Jun-04</div>
   </div>
 </div>
 
@@ -154,7 +166,7 @@
     </div>
     <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
       <span class="saving" id="saving-indicator"></span>
-      <span style="font-size:10px;color:#bbb;font-family:monospace;user-select:none" title="Build version">v2.81-Jun-04</span>
+      <span style="font-size:10px;color:#bbb;font-family:monospace;user-select:none" title="Build version">v2.82-Jun-04</span>
       <button id="btn-job-template" class="btn tab-btn-jobs" style="display:none" onclick="downloadCsvTemplate()">⬇ Job template</button>
       <button id="btn-import-jobs" class="btn tab-btn-jobs" style="display:none" onclick="document.getElementById('csv-file-input').click()">⬆ Import jobs</button>
       <button id="btn-actuals-template" class="btn tab-btn-actuals" style="display:none" onclick="downloadActualsTemplate()">⬇ Actuals template</button>
@@ -175,15 +187,20 @@
     </div>
   </div>
 
+  <div class="nav-primary">
+    <button class="navp active" data-group="overview" onclick="showTab('summary')">Overview</button>
+    <button class="navp" data-group="jobs" onclick="showTab('jobs')">Jobs</button>
+    <button class="navp" data-group="cash" onclick="showTab('liabilities')">Cash items</button>
+  </div>
   <div class="tabs">
-    <button class="tab active" onclick="showTab('summary')">Summary</button>
-    <button class="tab" onclick="showTab('jobs')">All jobs</button>
-    <button class="tab" onclick="showTab('actuals')">Enter actuals</button>
-    <button class="tab" onclick="showTab('variance')">Variance report</button>
-    <button class="tab" onclick="showTab('liabilities')">Liabilities</button>
-    <button class="tab" onclick="showTab('retentions')">Retentions</button>
-    <button class="tab" onclick="showTab('credits')">Credits</button>
-    <button class="tab" onclick="showTab('forecast')">Forecast</button>
+    <button class="tab subtab grp-overview active" data-tab="summary" onclick="showTab('summary')">Summary</button>
+    <button class="tab subtab grp-overview" data-tab="forecast" onclick="showTab('forecast')">Forecast</button>
+    <button class="tab subtab grp-jobs" data-tab="jobs" style="display:none" onclick="showTab('jobs')">All jobs</button>
+    <button class="tab subtab grp-jobs" data-tab="actuals" style="display:none" onclick="showTab('actuals')">Actuals</button>
+    <button class="tab subtab grp-jobs" data-tab="variance" style="display:none" onclick="showTab('variance')">Variance</button>
+    <button class="tab subtab grp-cash" data-tab="liabilities" style="display:none" onclick="showTab('liabilities')">Liabilities</button>
+    <button class="tab subtab grp-cash" data-tab="retentions" style="display:none" onclick="showTab('retentions')">Retentions</button>
+    <button class="tab subtab grp-cash" data-tab="credits" style="display:none" onclick="showTab('credits')">Credits</button>
   </div>
 
   <div id="summary" class="section active"><div class="empty-state">Connecting...</div></div>
@@ -350,13 +367,12 @@
       <div></div>
     </div>
     <div id="f-smallworks-fields" style="display:none">
-      <div class="sub-label">Deposit / advance payment</div>
+      <div class="sub-label">Deposit / advance payment<span class="infotip">i<span class="infotip-bubble">Deposit lands in this month — often before site work starts. Set <strong>Project start</strong> to when work begins; the spread starts there, so lead-time months aren't forecast. <strong>Leave the amount blank</strong> to let QB fill it from the deposit invoice — enter it only to forecast a deposit before it's raised in QB. For payment-on-receipt deposits set <strong>Payment terms → Same month</strong>.</span></span></div>
       <div class="form-grid">
         <div><label>Deposit / order month</label><input type="text" id="f-deposit-month" placeholder="MM/YY" style="width:100px"></div>
         <div><label>Deposit amount (£) — optional</label><input type="number" id="f-deposit-amount" placeholder="auto from QB"></div>
         <div></div>
       </div>
-      <div style="font-size:12px;color:#888;margin-bottom:1rem;margin-top:-6px">Deposit lands in this month — often before site work starts. Set <strong>Project start</strong> to when work begins; the spread starts there, so lead-time months aren't forecast. <strong>Leave the amount blank</strong> to let QB fill it from the deposit invoice — enter it only to forecast a deposit before it's raised in QB. For payment-on-receipt deposits set <strong>Payment terms → Same month</strong>.</div>
     </div>
     <div class="form-grid">
       <!-- TODO: f-contract should be required — no forecast is possible without a contract value -->
@@ -382,7 +398,7 @@
           <option value="2">45 days following month</option>
         </select>
       </div>
-      <div id="f-defects-wrap"><label>Defects period</label>
+      <div id="f-defects-wrap"><label>Defects period<span class="infotip">i<span class="infotip-bubble">First 50% of retention released on job completion; the balance released at the end of the defects period.</span></span></label>
         <select id="f-moiety">
           <option value="12">12 months</option>
           <option value="24">24 months</option>
@@ -403,7 +419,6 @@
       <input type="checkbox" id="f-domestic" style="width:auto;cursor:pointer">
       <label for="f-domestic" style="font-size:13px;color:#1a1a1a;cursor:pointer;margin:0">Domestic client — no CIS deducted (untick for contractor / CIS jobs)</label>
     </div>
-    <div id="f-defects-note" style="font-size:12px;color:#888;margin-bottom:1rem;margin-top:-6px">First 50% released on job completion. Balance released at end of defects period.</div>
 
     <div class="modal-footer">
       <button class="btn" onclick="closeModal()">Cancel</button>
@@ -880,6 +895,9 @@ function getCurrentMonth() {
 
 function fmt(n) { return '£' + Math.round(n).toLocaleString('en-GB'); }
 function fmtPct(n) { return (Math.round(n * 10) / 10).toFixed(1) + '%'; }
+// Reusable info-hover. Returns an ⓘ marker whose tooltip shows `text` on hover.
+// Use for explanatory/methodology notes; keep data sub-labels as visible text.
+function infoTip(text) { return `<span class="infotip">i<span class="infotip-bubble">${text}</span></span>`; }
 
 // Derived job status. 'complete' and 'paused' are explicit (set from the actuals tab);
 // otherwise a job is 'future' until its start month arrives, then 'active'.
@@ -3065,6 +3083,7 @@ function renderForecastSection() {
         <span style="display:flex;align-items:center;gap:5px"><span style="width:12px;height:12px;border-radius:2px;background:rgba(202,138,4,0.75);display:inline-block"></span>Overhead</span>
         <span style="display:flex;align-items:center;gap:5px"><span style="width:12px;height:12px;border-radius:2px;background:rgba(109,40,217,0.65);display:inline-block"></span>Liabilities</span>
         <span style="display:flex;align-items:center;gap:5px"><span style="width:24px;height:2px;background:#1d4ed8;display:inline-block"></span>Working capital</span>
+        <span style="display:flex;align-items:center;gap:5px"><span style="width:24px;height:0;border-top:2px dotted #60a5fa;display:inline-block"></span>Avg cash</span>
       </div>
       <div style="display:flex;gap:16px;font-size:12px;color:#888;flex-wrap:wrap;align-items:center" id="fc-legend-line">
         <span style="display:flex;align-items:center;gap:6px"><span style="width:22px;height:2.5px;background:#1d4ed8;display:inline-block;border-radius:2px"></span>Billing (solid = actual, dashed = forecast)</span>
@@ -3184,6 +3203,9 @@ function renderForecastSection() {
 
   } else {
     // ── Bar chart (default) ───────────────────────────────────────────────────
+    // Average closing cash across the visible period — drawn as a flat dotted line
+    // so you can see at a glance which months sit above / below the run-rate.
+    const avgCash = rows.length ? Math.round(rows.reduce((s, r) => s + r.cash, 0) / rows.length) : 0;
     forecastChartInst = new Chart(document.getElementById('forecastChart').getContext('2d'), {
       type: 'bar',
       plugins: [fcPastShadePlugin],
@@ -3196,7 +3218,8 @@ function renderForecastSection() {
           { label: 'Materials',          data: rows.map(r => -Math.round(r.tM)),                backgroundColor: 'rgba(234,88,12,0.75)',  borderRadius: 3 },
           { label: 'Overhead',           data: rows.map(r => -Math.round(r.tO)),                backgroundColor: 'rgba(202,138,4,0.75)',  borderRadius: 3 },
           { label: 'Liabilities',        data: rows.map(r => -Math.round(r.tLiab)),             backgroundColor: 'rgba(109,40,217,0.65)', borderRadius: 3 },
-          { label: 'Working capital',    data: rows.map(r => Math.round(r.cash)), type: 'line', borderColor: '#1d4ed8', backgroundColor: 'transparent', borderWidth: 2, pointRadius: allMonths.length > 18 ? 2 : 3, tension: 0.3, order: 0 }
+          { label: 'Working capital',    data: rows.map(r => Math.round(r.cash)), type: 'line', borderColor: '#1d4ed8', backgroundColor: 'transparent', borderWidth: 2, pointRadius: allMonths.length > 18 ? 2 : 3, tension: 0.3, order: 0 },
+          { label: 'Avg cash',           data: rows.map(() => avgCash), type: 'line', borderColor: '#60a5fa', backgroundColor: 'transparent', borderWidth: 1.5, borderDash: [2,3], pointRadius: 0, tension: 0, order: 0, spanGaps: true }
         ]
       },
       options: {
@@ -3216,9 +3239,7 @@ function renderForecastSection() {
   const totNet=totGross-totRetHeld;
   const totCash=totCashSum;
 
-  let fctbl = `<div style="font-size:11px;color:#888;margin-bottom:.5rem">
-    Cash-flow waterfall. Labour &amp; overhead paid month incurred; materials &amp; their VAT on 30-day account; billing per payment terms; retention excluded until invoiced. VAT settles monthly (reclaim/payment ~next month). CIS suffered is shown for reference — it's already netted into billing (full CIS in/out to come).
-  </div>
+  let fctbl = `<div style="font-size:12px;font-weight:600;color:#555;margin-bottom:.5rem">Cash-flow waterfall${infoTip("Labour &amp; overhead paid the month incurred; materials &amp; their VAT on a 30-day account; billing per payment terms; retention excluded until invoiced. VAT settles monthly (reclaim/payment ~next month). CIS suffered is shown for reference — it's already netted into billing (full CIS in/out to come).")}</div>
   <div class="card" style="padding:0;overflow-x:auto;margin-top:.25rem">
   <table style="font-size:13px;white-space:nowrap">
   <thead><tr>
@@ -3509,7 +3530,7 @@ function renderRetentionsSection() {
     <table style="font-size:13px">
     <thead><tr>
       <th>Month due</th><th>Job</th><th>Project</th><th>Client</th><th>Release</th>
-      <th>Forecast</th><th>Actual invoiced</th><th>Variance</th>
+      <th>Forecast</th><th>Actual invoiced</th><th>Variance${infoTip("Variance = actual invoiced minus forecast. Negative = less than expected (e.g. retention negotiated down).")}</th>
       <th>Status</th><th>Action</th>
     </tr></thead><tbody>`;
 
@@ -3592,8 +3613,7 @@ function renderRetentionsSection() {
       <td style="color:${totVari < 0 ? '#dc2626' : totVari > 0 ? '#a16207' : '#888'}">${actTotal > 0 ? (totVari >= 0 ? '+' : '')+fmt(totVari) : '—'}</td>
       <td colspan="2"></td>
     </tr>`;
-    html += `</tbody></table></div>
-    <div style="font-size:11px;color:#aaa;margin-top:.5rem">Variance = actual invoiced minus forecast. Negative = less than expected (negotiated down).</div>`;
+    html += `</tbody></table></div>`;
   }
 
   el.innerHTML = html;
@@ -3879,9 +3899,28 @@ function renderAll() {
   renderLiabilitiesSection(); renderRetentionsSection(); renderCreditsSection(); renderForecastSection();
 }
 
+// Two-level navigation. Each section id belongs to one top-level group; showTab keeps
+// both the primary group nav and the secondary sub-tab row in sync, so programmatic
+// calls (e.g. a Summary metric jumping to Retentions) light up the right group too.
+const TAB_GROUPS = {
+  overview: ['summary', 'forecast'],
+  jobs:     ['jobs', 'actuals', 'variance'],
+  cash:     ['liabilities', 'retentions', 'credits'],
+};
+function groupOf(id) { return Object.keys(TAB_GROUPS).find(g => TAB_GROUPS[g].includes(id)) || 'overview'; }
+
 function showTab(id) {
-  document.querySelectorAll('.tab').forEach((t, i) => t.classList.toggle('active', ['summary','jobs','actuals','variance','liabilities','retentions','credits','forecast'][i] === id));
+  const grp = groupOf(id);
+  // Primary group nav
+  document.querySelectorAll('.navp').forEach(b => b.classList.toggle('active', b.dataset.group === grp));
+  // Sub-tabs: show only the active group's, mark the chosen one active
+  document.querySelectorAll('.subtab').forEach(b => {
+    b.style.display = b.classList.contains('grp-' + grp) ? '' : 'none';
+    b.classList.toggle('active', b.dataset.tab === id);
+  });
+  // Sections
   document.querySelectorAll('.section').forEach(s => s.classList.toggle('active', s.id === id));
+  // Per-tab header action buttons
   document.querySelectorAll('.tab-btn-jobs').forEach(b => b.style.display = id === 'jobs' ? '' : 'none');
   document.querySelectorAll('.tab-btn-actuals').forEach(b => b.style.display = id === 'actuals' ? '' : 'none');
   document.querySelectorAll('.tab-btn-liabilities').forEach(b => b.style.display = id === 'liabilities' ? '' : 'none');
@@ -3902,9 +3941,7 @@ function onJobTypeChange() {
 function onRetentionChange() {
   const ret = parseFloat(document.getElementById('f-retention').value) || 0;
   const wrap = document.getElementById('f-defects-wrap');
-  const note = document.getElementById('f-defects-note');
   if (wrap) wrap.style.visibility = ret > 0 ? 'visible' : 'hidden';
-  if (note) note.style.display = ret > 0 ? 'block' : 'none';
 }
 
 function openAddJob() {
