@@ -133,7 +133,7 @@
     </form>
     <div class="login-error" id="login-error"></div>
     <div class="login-hint">Shared login for Stuart &amp; accountant</div>
-    <div style="margin-top:1.5rem;font-size:10px;color:#bbb;font-family:monospace">v2.79-Jun-03</div>
+    <div style="margin-top:1.5rem;font-size:10px;color:#bbb;font-family:monospace">v2.80-Jun-04</div>
   </div>
 </div>
 
@@ -154,7 +154,7 @@
     </div>
     <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
       <span class="saving" id="saving-indicator"></span>
-      <span style="font-size:10px;color:#bbb;font-family:monospace;user-select:none" title="Build version">v2.79-Jun-03</span>
+      <span style="font-size:10px;color:#bbb;font-family:monospace;user-select:none" title="Build version">v2.80-Jun-04</span>
       <button id="btn-job-template" class="btn tab-btn-jobs" style="display:none" onclick="downloadCsvTemplate()">⬇ Job template</button>
       <button id="btn-import-jobs" class="btn tab-btn-jobs" style="display:none" onclick="document.getElementById('csv-file-input').click()">⬆ Import jobs</button>
       <button id="btn-actuals-template" class="btn tab-btn-actuals" style="display:none" onclick="downloadActualsTemplate()">⬇ Actuals template</button>
@@ -1508,11 +1508,14 @@ function renderSummary() {
     <div class="metric" style="cursor:pointer" onclick="showTab('retentions')"><div class="metric-label">Retention outstanding ↗</div><div class="metric-value red">${fmt(retOutstanding)}</div><div style="font-size:11px;color:#888;margin-top:2px">Held minus released</div></div>
   </div>`;
 
-  // Jobs at risk
-  html += `<div style="font-size:12px;font-weight:600;color:#888;text-transform:uppercase;letter-spacing:.05em;margin-bottom:.5rem">Jobs at risk</div>`;
+  // Jobs at risk (collapsible — collapsed by default to save space)
   if (!atRisk.length) {
+    html += `<div style="font-size:12px;font-weight:600;color:#888;text-transform:uppercase;letter-spacing:.05em;margin-bottom:.5rem">Jobs at risk</div>`;
     html += `<div class="card" style="padding:1rem 1.25rem;margin-bottom:1.5rem;color:#16a34a;font-size:13px">✓ All active jobs are tracking within forecast — no issues detected.</div>`;
   } else {
+    let _riskTotal = 0, _riskHigh = 0;
+    atRisk.forEach(({ risks }) => risks.forEach(r => { _riskTotal++; if (r.severity === 'high') _riskHigh++; }));
+    html += `<details style="margin-bottom:1.25rem"><summary style="cursor:pointer;font-size:12px;font-weight:600;color:#888;text-transform:uppercase;letter-spacing:.05em;padding:.4rem 0;user-select:none">Jobs at risk — ${_riskTotal} item${_riskTotal !== 1 ? 's' : ''}${_riskHigh ? ` · <span style="color:#dc2626;text-transform:none">${_riskHigh} high</span>` : ''}</summary><div style="margin-top:.5rem">`;
     // Group by risk type
     const categories = [
       { key: 'needs-billing', label: 'Needs billing — no application due this month', icon: '🟠' },
@@ -1549,14 +1552,15 @@ function renderSummary() {
       });
       html += '</tbody></table></div>';
     });
-    html += '<div style="margin-bottom:.75rem"></div>';
+    html += '</div></details>';
   }
 
-  // Upcoming
-  html += `<div style="font-size:12px;font-weight:600;color:#888;text-transform:uppercase;letter-spacing:.05em;margin-bottom:.5rem">Upcoming (next 3 months)</div>`;
+  // Upcoming (collapsible — collapsed by default to save space)
   if (!upcoming.length) {
+    html += `<div style="font-size:12px;font-weight:600;color:#888;text-transform:uppercase;letter-spacing:.05em;margin-bottom:.5rem">Upcoming (next 3 months)</div>`;
     html += `<div class="card" style="padding:1rem 1.25rem;color:#888;font-size:13px">No jobs starting or ending in the next 3 months.</div>`;
   } else {
+    html += `<details style="margin-bottom:.5rem"><summary style="cursor:pointer;font-size:12px;font-weight:600;color:#888;text-transform:uppercase;letter-spacing:.05em;padding:.4rem 0;user-select:none">Upcoming (next 3 months) — ${upcoming.length}</summary><div style="margin-top:.5rem">`;
     html += `<div class="card" style="padding:0;overflow:hidden"><table style="font-size:13px"><thead><tr><th>Month</th><th>Job ref</th><th>Client</th><th>Event</th><th>Contract</th><th>Retention</th><th></th></tr></thead><tbody>`;
     upcoming.forEach(u => {
       const isEnd = u.type === 'ending';
@@ -1574,7 +1578,7 @@ function renderSummary() {
         <td><button class="btn btn-sm" onclick="showTab('actuals');setActualsJob(${jobs.indexOf(u.j)})">Actuals</button></td>
       </tr>`;
     });
-    html += '</tbody></table></div>';
+    html += '</tbody></table></div></div></details>';
   }
 
   el.innerHTML = html;
@@ -4394,7 +4398,7 @@ async function qboSync(silent = false) {
           </span>
         </div>`;
       }).join('');
-      alert.innerHTML = `<div style="font-weight:600;margin-bottom:6px">🟠 ${data.unmatchedActive.length} QB E-number${data.unmatchedActive.length > 1 ? 's' : ''} not in the app — capture any outstanding retention, ignore old/finished ones (won't ask again), or add as a job:</div>${rows}
+      alert.innerHTML = `<details><summary style="cursor:pointer;font-weight:600;user-select:none">🟠 ${data.unmatchedActive.length} QB E-number${data.unmatchedActive.length > 1 ? 's' : ''} not in the app — capture retention, ignore old ones, or add as a job</summary><div style="margin-top:6px">${rows}</div></details>
         <div style="margin-top:6px"><a href="#" onclick="document.getElementById('qbo-unmatched-alert').remove();return false" style="color:#9a3412;font-size:11px">Dismiss for now</a></div>`;
       const header = document.querySelector('.header') || document.querySelector('header');
       if (header && header.parentNode) {
