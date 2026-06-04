@@ -133,7 +133,7 @@
     </form>
     <div class="login-error" id="login-error"></div>
     <div class="login-hint">Shared login for Stuart &amp; accountant</div>
-    <div style="margin-top:1.5rem;font-size:10px;color:#bbb;font-family:monospace">v2.78-Jun-03</div>
+    <div style="margin-top:1.5rem;font-size:10px;color:#bbb;font-family:monospace">v2.79-Jun-03</div>
   </div>
 </div>
 
@@ -154,7 +154,7 @@
     </div>
     <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
       <span class="saving" id="saving-indicator"></span>
-      <span style="font-size:10px;color:#bbb;font-family:monospace;user-select:none" title="Build version">v2.78-Jun-03</span>
+      <span style="font-size:10px;color:#bbb;font-family:monospace;user-select:none" title="Build version">v2.79-Jun-03</span>
       <button id="btn-job-template" class="btn tab-btn-jobs" style="display:none" onclick="downloadCsvTemplate()">⬇ Job template</button>
       <button id="btn-import-jobs" class="btn tab-btn-jobs" style="display:none" onclick="document.getElementById('csv-file-input').click()">⬆ Import jobs</button>
       <button id="btn-actuals-template" class="btn tab-btn-actuals" style="display:none" onclick="downloadActualsTemplate()">⬇ Actuals template</button>
@@ -4380,7 +4380,8 @@ async function qboSync(silent = false) {
       alert.style.cssText = 'margin:8px 16px;padding:10px 14px;background:#fff7ed;border:1px solid #fed7aa;border-radius:8px;font-size:12px;color:#9a3412';
       const rows = data.unmatchedActive.map(p => {
         const ret = p.outstandingRetention || 0;
-        const retLine = ret > 0 ? ' · <b style="color:#0f766e">' + fmt(ret) + ' retention outstanding</b>' : '';
+        const credited = p.retentionCredited || 0;
+        const retLine = ret > 0 ? ' · <b style="color:#0f766e">' + fmt(ret) + ' retention outstanding</b>' + (credited ? ' <span style="color:#888">(' + fmt(Math.abs(credited)) + ' reversed via credit notes)</span>' : '') : '';
         const lastAct = p.lastActivity || p.firstActivity || '';
         const cp = JSON.stringify({ eNum: p.eNum, name: p.name, client: p.client, amount: ret }).replace(/"/g, '&quot;');
         return `<div data-unmatched-row id="unmatched-${p.eNum}" style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid #fed7aa;gap:12px;flex-wrap:wrap">
