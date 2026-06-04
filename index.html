@@ -133,7 +133,7 @@
     </form>
     <div class="login-error" id="login-error"></div>
     <div class="login-hint">Shared login for Stuart &amp; accountant</div>
-    <div style="margin-top:1.5rem;font-size:10px;color:#bbb;font-family:monospace">v2.80-Jun-04</div>
+    <div style="margin-top:1.5rem;font-size:10px;color:#bbb;font-family:monospace">v2.81-Jun-04</div>
   </div>
 </div>
 
@@ -154,7 +154,7 @@
     </div>
     <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
       <span class="saving" id="saving-indicator"></span>
-      <span style="font-size:10px;color:#bbb;font-family:monospace;user-select:none" title="Build version">v2.80-Jun-04</span>
+      <span style="font-size:10px;color:#bbb;font-family:monospace;user-select:none" title="Build version">v2.81-Jun-04</span>
       <button id="btn-job-template" class="btn tab-btn-jobs" style="display:none" onclick="downloadCsvTemplate()">⬇ Job template</button>
       <button id="btn-import-jobs" class="btn tab-btn-jobs" style="display:none" onclick="document.getElementById('csv-file-input').click()">⬆ Import jobs</button>
       <button id="btn-actuals-template" class="btn tab-btn-actuals" style="display:none" onclick="downloadActualsTemplate()">⬇ Actuals template</button>
@@ -389,6 +389,16 @@
         </select>
       </div>
     </div>
+    <div class="form-grid">
+      <div><label>VAT on invoicing</label>
+        <select id="f-vat-rate">
+          <option value="0">Zero-rated (0%) — new build</option>
+          <option value="20">Standard rated (20%)</option>
+        </select>
+      </div>
+      <div></div>
+      <div></div>
+    </div>
     <div style="display:flex;align-items:center;gap:10px;margin-bottom:1rem;margin-top:-4px">
       <input type="checkbox" id="f-domestic" style="width:auto;cursor:pointer">
       <label for="f-domestic" style="font-size:13px;color:#1a1a1a;cursor:pointer;margin:0">Domestic client — no CIS deducted (untick for contractor / CIS jobs)</label>
@@ -559,6 +569,7 @@ let jobs = [];
 let liabilities = [];
 let credits = [];
 let unallocatedCosts = {}; // { [month]: { labour, materials } } — from QB bills with no E-number
+let vatInput = {}; // { [month]: input_vat } — company-level input VAT paid on purchases (from QB bill tax)
 let editCreditIdx = null;
 let editIdx = null;
 let editLiabIdx = null;
@@ -643,7 +654,8 @@ function dbToJob(row) {
     jobType: row.job_type || 'contract',
     depositAmount: parseFloat(row.deposit_amount) || 0,
     depositMonth: row.deposit_month || '',
-    paused: row.paused === true
+    paused: row.paused === true,
+    vatRate: parseFloat(row.vat_rate) || 0
   };
 }
 
@@ -664,7 +676,8 @@ function jobToDb(j) {
     job_type: j.jobType || 'contract',
     deposit_amount: j.depositAmount || null,
     deposit_month: j.depositMonth || null,
-    paused: j.paused || false
+    paused: j.paused || false,
+    vat_rate: j.vatRate || 0
   };
 }
 
@@ -684,11 +697,12 @@ function setSaving(msg) { document.getElementById('saving-indicator').textConten
 async function loadJobs() {
   setStatus('connecting', 'Connecting to your database...');
   try {
-    const [jobData, liabData, creditData, unallocData] = await Promise.all([
+    const [jobData, liabData, creditData, unallocData, vatData] = await Promise.all([
       sbFetch('jobs?select=*&order=created_at.asc'),
       sbFetch('liabilities?select=*&order=created_at.asc').catch(() => []),
       sbFetch('credits?select=*&order=created_at.asc').catch(() => []),
-      sbFetch('unallocated_costs?select=*').catch(() => [])
+      sbFetch('unallocated_costs?select=*').catch(() => []),
+      sbFetch('vat_input_monthly?select=*').catch(() => [])
     ]);
     jobs = jobData.map(dbToJob);
     liabilities = liabData.map(dbToLiab);
@@ -698,6 +712,9 @@ async function loadJobs() {
     (unallocData || []).forEach(r => {
       unallocatedCosts[r.month] = { labour: parseFloat(r.labour)||0, materials: parseFloat(r.materials)||0 };
     });
+    // Build input-VAT lookup by month
+    vatInput = {};
+    (vatData || []).forEach(r => { vatInput[r.month] = parseFloat(r.input_vat) || 0; });
 
     isConnected = true;
     setStatus('connected', 'Connected — all changes save automatically and sync live with your accountant');
@@ -2924,7 +2941,7 @@ function renderForecastSection() {
   const rows = allMonths.map(m => {
     const mPrev  = prevMonth(m);
     const mPrev2 = prevMonth(mPrev);
-    let tL=0, tM=0, tO=0, tGrossBilling=0, tRetHeld=0;
+    let tL=0, tM=0, tO=0, tGrossBilling=0, tRetHeld=0, tOutputVat=0;
     jobs.forEach(j => {
       const ms = getEffectiveMonths(j);
       // Has QBO data = has at least one month of actuals entered
@@ -2949,6 +2966,8 @@ function renderForecastSection() {
       const prevBilling = getJobBillingForMonth(j, billingMonth);
       tGrossBilling += prevBilling.gross;
       tRetHeld += prevBilling.ret;
+      // Output VAT collected on standard-rated jobs (0 for zero-rated new-build) — on the net billing cash
+      if (j.vatRate) tOutputVat += (j.vatRate / 100) * (prevBilling.gross - prevBilling.ret);
     });
     const tC = tL + tM + tO;
     const tLiab = getTotalLiabilitiesForMonth(m);
@@ -2977,8 +2996,23 @@ function renderForecastSection() {
     // Future months: unallocated costs not forecast (no basis for projection)
     const tCTotal = tC + tUnallocLabour + tUnallocMaterials;
     const tNetBilling = tGrossBilling - tRetHeld;
-    const cash = tNetBilling + tRetFinal + tCreditsReceived + tDepositExpected - tCTotal - tLiab;
-    return {m, tL, tM, tO, tC, tCTotal, tGrossBilling, tRetHeld, tNetBilling, tLiab, tRetFinal, tCreditsReceived, tDepositExpected, cash, tUnallocLabour, tUnallocMaterials};
+    // Input VAT paid on purchases (cash out). Actual from QB bill tax (lagged like materials)
+    // for past/current months; forecast as 20% of forecast materials for future months.
+    const tInputVat = (m <= cur) ? (vatInput[mPrev] || 0) : (0.20 * (tM + tUnallocMaterials));
+    // Cash: VAT collected in, VAT paid out; the monthly settlement (added in the pass below) reverses the net.
+    const cash = tNetBilling + tOutputVat + tRetFinal + tCreditsReceived + tDepositExpected - tCTotal - tInputVat - tLiab;
+    return {m, tL, tM, tO, tC, tCTotal, tGrossBilling, tRetHeld, tNetBilling, tLiab, tRetFinal, tCreditsReceived, tDepositExpected, tOutputVat, tInputVat, vatSettlement: 0, cash, tUnallocLabour, tUnallocMaterials};
+  });
+
+  // VAT settlement (monthly): the net VAT for the prior period (input − output) is reclaimed/paid
+  // ~1 month later. For RSE (input VAT usually exceeds output) this is mostly a reclaim landing back in.
+  const VAT_LAG = 1; // months — configurable later (monthly VAT, reclaims land ~next month)
+  rows.forEach((r, i) => {
+    const src = rows[i - VAT_LAG];
+    if (src) {
+      r.vatSettlement = src.tInputVat - src.tOutputVat; // + = reclaim (cash in), − = payment to HMRC
+      r.cash += r.vatSettlement;
+    }
   });
 
   if (forecastChartInst) { forecastChartInst.destroy(); forecastChartInst = null; }
@@ -3176,22 +3210,25 @@ function renderForecastSection() {
     });
   }
 
-  let totL=0,totM=0,totO=0,totGross=0,totRetHeld=0,totLiab=0,totRetRec=0,totCredRec=0,totUnallocL=0,totUnallocM=0;
-  rows.forEach(r=>{totL+=r.tL;totM+=r.tM;totO+=r.tO;totGross+=r.tGrossBilling;totRetHeld+=r.tRetHeld;totLiab+=r.tLiab;totRetRec+=r.tRetFinal;totCredRec+=r.tCreditsReceived+r.tDepositExpected;totUnallocL+=r.tUnallocLabour;totUnallocM+=r.tUnallocMaterials;});
+  let totL=0,totM=0,totO=0,totGross=0,totRetHeld=0,totLiab=0,totRetRec=0,totCredRec=0,totUnallocL=0,totUnallocM=0,totOutVat=0,totInVat=0,totVatSet=0,totCisSuf=0,totCashSum=0;
+  rows.forEach(r=>{totL+=r.tL;totM+=r.tM;totO+=r.tO;totGross+=r.tGrossBilling;totRetHeld+=r.tRetHeld;totLiab+=r.tLiab;totRetRec+=r.tRetFinal;totCredRec+=r.tCreditsReceived+r.tDepositExpected;totUnallocL+=r.tUnallocLabour;totUnallocM+=r.tUnallocMaterials;totOutVat+=r.tOutputVat;totInVat+=r.tInputVat;totVatSet+=r.vatSettlement;totCashSum+=r.cash;jobs.forEach(j=>{const a=j.actuals[r.m];if(a&&a.cis_deducted)totCisSuf+=a.cis_deducted;});});
   const totC=totL+totM+totO+totUnallocL+totUnallocM;
   const totNet=totGross-totRetHeld;
-  const totCash=totNet+totRetRec+totCredRec-totC-totLiab;
+  const totCash=totCashSum;
 
   let fctbl = `<div style="font-size:11px;color:#888;margin-bottom:.5rem">
-    Labour and overhead paid month incurred. Materials on 30-day account. Billing received per payment terms. Retention excluded until invoiced.
+    Cash-flow waterfall. Labour &amp; overhead paid month incurred; materials &amp; their VAT on 30-day account; billing per payment terms; retention excluded until invoiced. VAT settles monthly (reclaim/payment ~next month). CIS suffered is shown for reference — it's already netted into billing (full CIS in/out to come).
   </div>
-  <div class="card" style="padding:0;overflow:hidden;margin-top:.25rem">
-  <table style="font-size:13px">
+  <div class="card" style="padding:0;overflow-x:auto;margin-top:.25rem">
+  <table style="font-size:13px;white-space:nowrap">
   <thead><tr>
     <th>Month</th>
-    <th>Total costs</th>
-    <th>Net billing</th>
-    <th>Ret. received</th>
+    <th>Costs</th>
+    <th>Liabilities</th>
+    <th>Gross billing</th>
+    <th>Ret in/out</th>
+    <th>VAT in/out</th>
+    <th>CIS in/out</th>
     <th>Credits</th>
     <th>Working capital</th>
     <th>Cumulative</th>
@@ -3241,21 +3278,31 @@ function renderForecastSection() {
     liabilities.forEach(l => { if (getLiabMonths(l).has(r.m)) liabDetails.push({ name: l.name, amount: l.amount }); });
     const creditsThisMonth = credits.filter(c => c.received && c.receivedMonth === r.m);
 
+    let tCis = 0;
+    jobs.forEach(j => { const a = j.actuals[r.m]; if (a && a.cis_deducted) tCis += a.cis_deducted; });
+    const retNet = r.tRetFinal - r.tRetHeld;
+    const vatNet = r.tOutputVat - r.tInputVat + r.vatSettlement;
+    const totCred = r.tCreditsReceived + r.tDepositExpected;
+    const sub = s => `<div style="font-size:10px;color:#999;margin-top:1px">${s}</div>`;
+    const dash = '<span style="color:#ccc">—</span>';
     fctbl += `<tr style="${rowBg}" id="row-${ri}">
       <td style="white-space:nowrap">
         <button onclick="toggleDetail('${detailId}','btn-${ri}')" id="btn-${ri}"
           style="width:22px;height:22px;border:1px solid #ddd;border-radius:4px;background:#fff;cursor:pointer;font-size:12px;margin-right:6px;line-height:1;vertical-align:middle">+</button>${monthLabel(r.m)}
       </td>
-      <td><strong>${fmt(r.tCTotal + r.tLiab)}</strong><div style="font-size:11px;color:#888">L:${fmt(r.tL)} M:${fmt(r.tM)} O:${fmt(r.tO)}${r.tUnallocLabour>0?' +UL:'+fmt(r.tUnallocLabour):''}${r.tUnallocMaterials>0?' +UM:'+fmt(r.tUnallocMaterials):''}${r.tLiab>0?' Liab:'+fmt(r.tLiab):''}</div></td>
-      <td><strong>${fmt(r.tNetBilling)}</strong><div style="font-size:11px;color:#888">Gross:${fmt(r.tGrossBilling)}${r.tRetHeld>0?' Ret:-'+fmt(r.tRetHeld):''}</div></td>
-      <td>${retRecCell}</td>
-      <td>${(r.tCreditsReceived + r.tDepositExpected) > 0 ? `<span style="color:#6d28d9;font-weight:600">+${fmt(r.tCreditsReceived + r.tDepositExpected)}</span>${r.tDepositExpected > 0 ? '<span style="font-size:10px;color:#888;margin-left:4px">deposit</span>' : ''}` : '<span style="color:#ccc">—</span>'}</td>
+      <td>${r.tCTotal>0?`<strong>${fmt(r.tCTotal)}</strong>${sub(`L ${fmt(r.tL)} · M ${fmt(r.tM)} · O ${fmt(r.tO)}${(r.tUnallocLabour+r.tUnallocMaterials)>0?' · +unalloc '+fmt(r.tUnallocLabour+r.tUnallocMaterials):''}`)}`:dash}</td>
+      <td>${r.tLiab>0?fmt(r.tLiab):dash}</td>
+      <td>${r.tGrossBilling>0?'<strong>'+fmt(r.tGrossBilling)+'</strong>':dash}</td>
+      <td>${(r.tRetHeld>0||r.tRetFinal>0)?`<span class="${retNet>=0?'green':'red'}">${retNet>=0?'+':''}${fmt(retNet)}</span>${sub(`${r.tRetHeld>0?'held −'+fmt(r.tRetHeld):''}${r.tRetFinal>0?(r.tRetHeld>0?' · ':'')+'in +'+fmt(r.tRetFinal):''}`)}`:dash}</td>
+      <td>${(r.tOutputVat>0||r.tInputVat>0||r.vatSettlement)?`<span class="${vatNet>=0?'green':'red'}">${vatNet>=0?'+':''}${fmt(vatNet)}</span>${sub(`${r.tOutputVat>0?'coll +'+fmt(r.tOutputVat):''}${r.tInputVat>0?(r.tOutputVat>0?' · ':'')+'paid −'+fmt(r.tInputVat):''}${r.vatSettlement?' · settle '+(r.vatSettlement>=0?'+':'')+fmt(r.vatSettlement):''}`)}`:dash}</td>
+      <td>${tCis>0?`<span style="color:#888">−${fmt(tCis)}</span>${sub('in billing')}`:dash}</td>
+      <td>${totCred>0?`<span style="color:#6d28d9;font-weight:600">+${fmt(totCred)}</span>${r.tDepositExpected>0?sub('incl. deposit'):''}`:dash}</td>
       <td class="${r.cash>=0?'green':'red'}"><strong>${r.cash>=0?'+':''}${fmt(r.cash)}</strong></td>
       <td class="${cumulative>=0?'green':'red'}" style="font-style:italic;opacity:0.85">${cumulative>=0?'+':''}${fmt(cumulative)}</td>
     </tr>`;
 
     let detailHtml = `<tr id="${detailId}" style="display:none">
-      <td colspan="7" style="padding:0;border-bottom:1px solid #e8e8e8">
+      <td colspan="10" style="padding:0;border-bottom:1px solid #e8e8e8">
         <div style="background:#f8f8f8;padding:10px 14px 10px 42px">
         <table style="width:100%;font-size:12px;border-collapse:collapse">
         <thead><tr style="color:#888">
@@ -3351,11 +3398,16 @@ function renderForecastSection() {
     fctbl += detailHtml;
   });
 
+  const totRetNet = totRetRec - totRetHeld;
+  const totVatNet = totOutVat - totInVat + totVatSet;
   fctbl += `<tr style="background:#f0f0f0;font-weight:600">
     <td>Total</td>
-    <td>${fmt(totC+totLiab)}</td>
-    <td>${fmt(totNet)}</td>
-    <td style="color:#0f766e">${totRetRec>0?'+'+fmt(totRetRec):'—'}</td>
+    <td>${fmt(totC)}</td>
+    <td>${totLiab>0?fmt(totLiab):'—'}</td>
+    <td>${fmt(totGross)}</td>
+    <td class="${totRetNet>=0?'green':'red'}">${(totRetHeld||totRetRec)?(totRetNet>=0?'+':'')+fmt(totRetNet):'—'}</td>
+    <td class="${totVatNet>=0?'green':'red'}">${(totOutVat||totInVat||totVatSet)?(totVatNet>=0?'+':'')+fmt(totVatNet):'—'}</td>
+    <td style="color:#888">${totCisSuf>0?'−'+fmt(totCisSuf):'—'}</td>
     <td style="color:#6d28d9">${totCredRec>0?'+'+fmt(totCredRec):'—'}</td>
     <td class="${totCash>=0?'green':'red'}">${totCash>=0?'+':''}${fmt(totCash)}</td>
     <td class="${totCash>=0?'green':'red'}" style="font-style:italic">${totCash>=0?'+':''}${fmt(totCash)}</td>
@@ -3863,6 +3915,7 @@ function openAddJob() {
   document.getElementById('f-dur').value = 3; document.getElementById('f-retention').value = 5;
   document.getElementById('f-moiety').value = '12';
   document.getElementById('f-payment-terms').value = '1';
+  document.getElementById('f-vat-rate').value = '0';
   document.getElementById('f-job-type').value = 'contract'; onJobTypeChange();
   onRetentionChange();
   const now = new Date(); document.getElementById('f-start').value = fmtMonthInput(now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0'));
@@ -3914,6 +3967,7 @@ function editJob(idx) {
   document.getElementById('f-retention').value = j.retention;
   document.getElementById('f-moiety').value = String(j.moiety || 12);
   document.getElementById('f-payment-terms').value = String(j.paymentTerms || 1);
+  document.getElementById('f-vat-rate').value = String(j.vatRate || 0);
   document.getElementById('f-job-type').value = j.jobType || 'contract';
   document.getElementById('f-deposit-amount').value = j.depositAmount || '';
   document.getElementById('f-deposit-month').value = j.depositMonth ? fmtMonthInput(j.depositMonth) : '';
@@ -4023,6 +4077,7 @@ async function saveJob() {
     name, client: document.getElementById('f-client').value.trim(),
     projectName: document.getElementById('f-project').value.trim(),
     jobType,
+    vatRate: parseFloat(document.getElementById('f-vat-rate').value) || 0,
     depositAmount: jobType === 'small' ? depositAmount : 0,
     depositMonth:  jobType === 'small' ? depositMonth  : '',
     start: startVal,
