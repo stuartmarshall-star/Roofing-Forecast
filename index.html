@@ -103,6 +103,18 @@
   .infotip > .infotip-bubble { visibility: hidden; opacity: 0; position: absolute; bottom: calc(100% + 8px); left: 50%; transform: translateX(-50%); background: #1f2937; color: #f3f4f6; font-size: 12px; font-weight: 400; text-align: left; line-height: 1.45; padding: 8px 10px; border-radius: 7px; width: max-content; max-width: 260px; white-space: normal; box-shadow: 0 6px 20px rgba(0,0,0,.18); z-index: 200; transition: opacity .12s, visibility .12s; pointer-events: none; }
   .infotip > .infotip-bubble::after { content: ''; position: absolute; top: 100%; left: 50%; transform: translateX(-50%); border: 5px solid transparent; border-top-color: #1f2937; }
   .infotip:hover > .infotip-bubble { visibility: visible; opacity: 1; }
+  /* Kanban board — Summary category piles */
+  .kanban { display: flex; gap: 12px; overflow-x: auto; padding-bottom: 10px; align-items: flex-start; }
+  .kan-col { flex: 0 0 280px; background: #f7f7f8; border: 1px solid #ececec; border-radius: 10px; padding: 10px; }
+  .kan-col-head { display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; color: #444; margin-bottom: 10px; padding: 0 2px; }
+  .kan-count { margin-left: auto; background: #e5e7eb; color: #555; border-radius: 10px; padding: 1px 8px; font-size: 11px; font-weight: 600; }
+  .kan-card { background: #fff; border: 1px solid #e8e8e8; border-left: 3px solid #cbd5e1; border-radius: 8px; padding: 9px 11px; margin-bottom: 8px; }
+  .kan-card:last-child { margin-bottom: 0; }
+  .kan-card-title { font-size: 13px; font-weight: 600; color: #1a1a1a; }
+  .kan-card-sub { font-size: 11px; color: #888; margin-top: 1px; }
+  .kan-card-detail { font-size: 12px; color: #444; margin-top: 6px; line-height: 1.4; }
+  .kan-card-actions { margin-top: 8px; }
+  .kan-empty { color: #9ca3af; font-size: 12px; padding: 10px 4px; text-align: center; }
   @media (max-width: 640px) {
     .metric-row { grid-template-columns: repeat(2, 1fr); }
     .form-grid { grid-template-columns: 1fr; }
@@ -145,7 +157,7 @@
     </form>
     <div class="login-error" id="login-error"></div>
     <div class="login-hint">Shared login for Stuart &amp; accountant</div>
-    <div style="margin-top:1.5rem;font-size:10px;color:#bbb;font-family:monospace">v2.83-Jun-04</div>
+    <div style="margin-top:1.5rem;font-size:10px;color:#bbb;font-family:monospace">v2.84-Jun-04</div>
   </div>
 </div>
 
@@ -166,7 +178,7 @@
     </div>
     <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
       <span class="saving" id="saving-indicator"></span>
-      <span style="font-size:10px;color:#bbb;font-family:monospace;user-select:none" title="Build version">v2.83-Jun-04</span>
+      <span style="font-size:10px;color:#bbb;font-family:monospace;user-select:none" title="Build version">v2.84-Jun-04</span>
       <button id="btn-job-template" class="btn tab-btn-jobs" style="display:none" onclick="downloadCsvTemplate()">⬇ Job template</button>
       <button id="btn-import-jobs" class="btn tab-btn-jobs" style="display:none" onclick="document.getElementById('csv-file-input').click()">⬆ Import jobs</button>
       <button id="btn-actuals-template" class="btn tab-btn-actuals" style="display:none" onclick="downloadActualsTemplate()">⬇ Actuals template</button>
@@ -194,6 +206,7 @@
   </div>
   <div class="tabs">
     <button class="tab subtab grp-overview active" data-tab="summary" onclick="showTab('summary')">Summary</button>
+    <button class="tab subtab grp-overview" data-tab="portfolio" onclick="showTab('portfolio')">Portfolio</button>
     <button class="tab subtab grp-overview" data-tab="forecast" onclick="showTab('forecast')">Forecast</button>
     <button class="tab subtab grp-jobs" data-tab="jobs" style="display:none" onclick="showTab('jobs')">All jobs</button>
     <button class="tab subtab grp-jobs" data-tab="actuals" style="display:none" onclick="showTab('actuals')">Actuals</button>
@@ -204,6 +217,7 @@
   </div>
 
   <div id="summary" class="section active"><div class="empty-state">Connecting...</div></div>
+  <div id="portfolio" class="section"></div>
   <div id="jobs" class="section"></div>
   <div id="actuals" class="section"></div>
   <div id="variance" class="section"></div>
@@ -1372,39 +1386,29 @@ async function deleteLiability(idx) {
   renderAll(); await dbDeleteLiab(id);
 }
 
-function renderSummary() {
-  const el = document.getElementById('summary');
+// Portfolio overview tab — whole-portfolio (not date-ranged) headline metrics.
+// Split out of renderSummary so Summary can be the action-oriented kanban board.
+function renderPortfolio() {
+  const el = document.getElementById('portfolio');
   if (!el) return;
   if (!jobs.length) { el.innerHTML = '<div class="empty-state">No jobs yet — click "+ Add job" to get started.</div>'; return; }
 
-  const cur = getCurrentMonth();
-  const next1 = addMonths(cur, 1), next2 = addMonths(cur, 2), next3 = addMonths(cur, 3);
-
-  // ── Portfolio overview ──────────────────────────────────────────────────────
   const fromM = appStartMonth || '';
   sumFromMonth = fromM; // keep in sync
-
   let totalContract=0, totalCost=0, totalActCost=0, totalActBilling=0, totalHeld=0, totalReleased=0;
   const activeJobs = jobs.filter(isActive);
   jobs.forEach(j => {
-    // If a from-filter is set, skip jobs that end before fromM
     const jMonths = getMonths(j.start, j.dur);
     const jEnd = jMonths[jMonths.length - 1];
-    if (fromM && jEnd < fromM) return; // job entirely before range
-
-    // Pro-rate contract and costs for jobs partially in range
+    if (fromM && jEnd < fromM) return;
     const inRangeMonths = fromM ? jMonths.filter(m => m >= fromM) : jMonths;
     const fraction = fromM && jMonths.length > 0 ? inRangeMonths.length / jMonths.length : 1;
     totalContract += j.contract * fraction;
     totalCost     += (netLabourTotal(j) + j.materials + j.overhead) * fraction;
-
     jMonths.forEach(m => {
       if (fromM && m < fromM) return;
       const a = j.actuals[m];
-      if (a) {
-        totalActCost    += (a.labour||0) + (a.materials||0) + (a.overhead||0);
-        totalActBilling += (a.billing||0);
-      }
+      if (a) { totalActCost += (a.labour||0)+(a.materials||0)+(a.overhead||0); totalActBilling += (a.billing||0); }
     });
     const half = getRetentionTotal(j) / 2;
     totalHeld += getRetentionTotal(j) * fraction;
@@ -1414,6 +1418,36 @@ function renderSummary() {
   const fcMarginPct = totalContract > 0 ? (totalContract - totalCost) / totalContract * 100 : 0;
   const actMarginPct = totalActBilling > 0 ? (totalActBilling - totalActCost) / totalActBilling * 100 : null;
   const retOutstanding = totalHeld - totalReleased;
+  const fcProfit = totalContract - totalCost;
+  const actProfit = totalActBilling > 0 ? totalActBilling - totalActCost : null;
+  const fromLabel = fromM ? ' from ' + monthLabel(fromM) : ' — all time';
+  const fromNote  = fromM
+    ? `<span style="font-size:11px;color:#888">Start date: <b>${monthLabel(fromM)}</b> — <a href="#" onclick="showTab('forecast');return false" style="color:#1d4ed8;text-decoration:none">change on Forecast tab ↗</a></span>`
+    : `<span style="font-size:11px;color:#888">No start date set — <a href="#" onclick="showTab('forecast');return false" style="color:#1d4ed8;text-decoration:none">set on Forecast tab ↗</a></span>`;
+  el.innerHTML = `<div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:.5rem">
+    <div style="font-size:12px;font-weight:600;color:#888;text-transform:uppercase;letter-spacing:.05em">Portfolio overview${fromLabel}</div>
+    ${fromNote}
+  </div>
+  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-bottom:1.5rem">
+    <div class="metric"><div class="metric-label">Total contracted value</div><div class="metric-value">${fmt(totalContract)}</div><div style="font-size:11px;color:#888;margin-top:2px">${fromM ? 'Jobs active from ' + monthLabel(fromM) : jobs.length + ' jobs, ' + activeJobs.length + ' active'}</div></div>
+    <div class="metric"><div class="metric-label">Total forecast costs</div><div class="metric-value">${fmt(totalCost)}</div><div style="font-size:11px;color:#888;margin-top:2px">Labour + materials + overhead</div></div>
+    <div class="metric"><div class="metric-label">Forecast profit</div><div class="metric-value ${fcProfit >= 0 ? 'green' : 'red'}">${fmt(fcProfit)}</div><div style="font-size:11px;color:#888;margin-top:2px">${fmtPct(fcMarginPct)} margin</div></div>
+    <div class="metric"><div class="metric-label">Actual billing to date</div><div class="metric-value">${fmt(totalActBilling)}</div><div style="font-size:11px;color:#888;margin-top:2px">${fromM ? 'From ' + monthLabel(fromM) : 'All actuals'}</div></div>
+    <div class="metric"><div class="metric-label">Actual profit to date</div><div class="metric-value ${actProfit !== null ? (actProfit >= 0 ? 'green' : 'red') : ''}">${actProfit !== null ? fmt(actProfit) : '—'}</div><div style="font-size:11px;color:#888;margin-top:2px">${actMarginPct !== null ? fmtPct(actMarginPct) + ' margin' : 'No actuals yet'}</div></div>
+    <div class="metric"><div class="metric-label">Actual margin to date</div><div class="metric-value ${actMarginPct !== null ? (actMarginPct >= fcMarginPct ? 'green' : 'red') : ''}">${actMarginPct !== null ? fmtPct(actMarginPct) : '—'}</div><div style="font-size:11px;color:#888;margin-top:2px">${actMarginPct !== null ? (actMarginPct >= fcMarginPct ? 'Ahead of forecast' : 'Behind forecast') : 'No actuals yet'}</div></div>
+    <div class="metric" style="cursor:pointer" onclick="showTab('retentions')"><div class="metric-label">Retention outstanding ↗</div><div class="metric-value red">${fmt(retOutstanding)}</div><div style="font-size:11px;color:#888;margin-top:2px">Held minus released</div></div>
+  </div>`;
+}
+
+function renderSummary() {
+  const el = document.getElementById('summary');
+  if (!el) return;
+  if (!jobs.length) { el.innerHTML = '<div class="empty-state">No jobs yet — click "+ Add job" to get started.</div>'; return; }
+
+  const cur = getCurrentMonth();
+  const next1 = addMonths(cur, 1), next2 = addMonths(cur, 2), next3 = addMonths(cur, 3);
+
+  // Portfolio metrics now render on the Portfolio tab (see renderPortfolio).
 
   // ── Jobs at risk ────────────────────────────────────────────────────────────
   const atRisk = [];
@@ -1519,102 +1553,74 @@ function renderSummary() {
   });
   upcoming.sort((a, b) => a.month.localeCompare(b.month));
 
-  // ── Render ──────────────────────────────────────────────────────────────────
-  let html = '';
+  // ── Render: kanban board of "needs attention" piles ──────────────────────────
+  // Company costs in QB with no job reference, most-recent month first.
+  const unallocMonths = Object.keys(unallocatedCosts || {})
+    .filter(m => { const u = unallocatedCosts[m]; return u && ((u.labour||0) + (u.materials||0) > 0); })
+    .sort().reverse();
 
-  // Portfolio overview
-  const fcProfit = totalContract - totalCost;
-  const actProfit = totalActBilling > 0 ? totalActBilling - totalActCost : null;
-  const fromLabel = fromM ? ' from ' + monthLabel(fromM) : ' — all time';
-  const fromNote  = fromM
-    ? `<span style="font-size:11px;color:#888">Start date: <b>${monthLabel(fromM)}</b> — <a href="#" onclick="showTab('forecast');return false" style="color:#1d4ed8;text-decoration:none">change on Forecast tab ↗</a></span>`
-    : `<span style="font-size:11px;color:#888">No start date set — <a href="#" onclick="showTab('forecast');return false" style="color:#1d4ed8;text-decoration:none">set on Forecast tab ↗</a></span>`;
-  html += `<div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:.5rem">
-    <div style="font-size:12px;font-weight:600;color:#888;text-transform:uppercase;letter-spacing:.05em">Portfolio overview${fromLabel}</div>
-    ${fromNote}
-  </div>
-  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-bottom:1.5rem">
-    <div class="metric"><div class="metric-label">Total contracted value</div><div class="metric-value">${fmt(totalContract)}</div><div style="font-size:11px;color:#888;margin-top:2px">${fromM ? 'Jobs active from ' + monthLabel(fromM) : jobs.length + ' jobs, ' + activeJobs.length + ' active'}</div></div>
-    <div class="metric"><div class="metric-label">Total forecast costs</div><div class="metric-value">${fmt(totalCost)}</div><div style="font-size:11px;color:#888;margin-top:2px">Labour + materials + overhead</div></div>
-    <div class="metric"><div class="metric-label">Forecast profit</div><div class="metric-value ${fcProfit >= 0 ? 'green' : 'red'}">${fmt(fcProfit)}</div><div style="font-size:11px;color:#888;margin-top:2px">${fmtPct(fcMarginPct)} margin</div></div>
-    <div class="metric"><div class="metric-label">Actual billing to date</div><div class="metric-value">${fmt(totalActBilling)}</div><div style="font-size:11px;color:#888;margin-top:2px">${fromM ? 'From ' + monthLabel(fromM) : 'All actuals'}</div></div>
-    <div class="metric"><div class="metric-label">Actual profit to date</div><div class="metric-value ${actProfit !== null ? (actProfit >= 0 ? 'green' : 'red') : ''}">${actProfit !== null ? fmt(actProfit) : '—'}</div><div style="font-size:11px;color:#888;margin-top:2px">${actMarginPct !== null ? fmtPct(actMarginPct) + ' margin' : 'No actuals yet'}</div></div>
-    <div class="metric"><div class="metric-label">Actual margin to date</div><div class="metric-value ${actMarginPct !== null ? (actMarginPct >= fcMarginPct ? 'green' : 'red') : ''}">${actMarginPct !== null ? fmtPct(actMarginPct) : '—'}</div><div style="font-size:11px;color:#888;margin-top:2px">${actMarginPct !== null ? (actMarginPct >= fcMarginPct ? 'Ahead of forecast' : 'Behind forecast') : 'No actuals yet'}</div></div>
-    <div class="metric" style="cursor:pointer" onclick="showTab('retentions')"><div class="metric-label">Retention outstanding ↗</div><div class="metric-value red">${fmt(retOutstanding)}</div><div style="font-size:11px;color:#888;margin-top:2px">Held minus released</div></div>
-  </div>`;
+  const idxOf = j => jobs.indexOf(j);
+  const sevColor = s => s === 'high' ? '#dc2626' : s === 'medium' ? '#d97706' : '#cbd5e1';
+  const viewBtn = j => `<button class="btn btn-sm" onclick="showTab('actuals');setActualsJob(${idxOf(j)})">View</button>`;
+  const cardSub = j => `${j.projectName||''}${j.client?(j.projectName?' · ':'')+j.client:''}`;
 
-  // Jobs at risk (collapsible — collapsed by default to save space)
-  if (!atRisk.length) {
-    html += `<div style="font-size:12px;font-weight:600;color:#888;text-transform:uppercase;letter-spacing:.05em;margin-bottom:.5rem">Jobs at risk</div>`;
-    html += `<div class="card" style="padding:1rem 1.25rem;margin-bottom:1.5rem;color:#16a34a;font-size:13px">✓ All active jobs are tracking within forecast — no issues detected.</div>`;
-  } else {
-    let _riskTotal = 0, _riskHigh = 0;
-    atRisk.forEach(({ risks }) => risks.forEach(r => { _riskTotal++; if (r.severity === 'high') _riskHigh++; }));
-    html += `<details style="margin-bottom:1.25rem"><summary style="cursor:pointer;font-size:12px;font-weight:600;color:#888;text-transform:uppercase;letter-spacing:.05em;padding:.4rem 0;user-select:none">Jobs at risk — ${_riskTotal} item${_riskTotal !== 1 ? 's' : ''}${_riskHigh ? ` · <span style="color:#dc2626;text-transform:none">${_riskHigh} high</span>` : ''}</summary><div style="margin-top:.5rem">`;
-    // Group by risk type
-    const categories = [
-      { key: 'needs-billing', label: 'Needs billing — no application due this month', icon: '🟠' },
-      { key: 'billing-overrun', label: 'Billing outstanding past end date', icon: '🔴' },
-      { key: 'costs-after-billing', label: 'Billing complete — costs still forecast', icon: '🟡' },
-      { key: 'cost', label: 'Cost overrun vs total budget', icon: '🔴' },
-      { key: 'cost-pace', label: 'Costs running ahead of plan', icon: '🟡' },
-      { key: 'billing', label: 'Billing behind forecast', icon: '🟡' },
-      { key: 'margin', label: 'Billing behind costs — recovery suggested', icon: '🟡' },
-    ];
-    categories.forEach(cat => {
-      const items = [];
-      atRisk.forEach(({ j, risks }) => {
-        risks.filter(r => r.type === cat.key).forEach(r => {
-          items.push({ j, r });
-        });
-      });
-      if (!items.length) return;
-      html += `<div style="font-size:12px;font-weight:600;color:#555;margin:.75rem 0 .35rem">${cat.icon} ${cat.label}</div>
-      <div class="card" style="padding:0;overflow:hidden;margin-bottom:.75rem">
-      <table style="font-size:13px"><thead><tr><th>Job ref</th><th>Project</th><th>Client</th><th>Detail</th><th>Severity</th><th></th></tr></thead><tbody>`;
-      items.forEach(({ j, r }) => {
-        const sevBadge = r.severity === 'high'
-          ? '<span style="background:#fee2e2;color:#dc2626;padding:2px 8px;border-radius:8px;font-size:11px">High</span>'
-          : '<span style="background:#fef9c3;color:#a16207;padding:2px 8px;border-radius:8px;font-size:11px">Medium</span>';
-        html += `<tr style="background:${r.severity==='high'?'#fef2f2':'#fefce8'};border-bottom:1px solid #f0f0f0">
-          <td style="font-weight:500">${j.name}</td>
-          <td style="color:#888;font-size:12px">${j.projectName||'—'}</td>
-          <td>${j.client||'—'}</td>
-          <td>${r.label}${r.suggestion ? '<div style="font-size:11px;color:#15803d;margin-top:3px;font-weight:500">→ ' + r.suggestion + '</div>' : ''}</td>
-          <td>${sevBadge}</td>
-          <td><button class="btn btn-sm" onclick="showTab('actuals');setActualsJob(${jobs.indexOf(j)})">View</button></td>
-        </tr>`;
-      });
-      html += '</tbody></table></div>';
+  // One card per job per column, aggregating that job's matching risks.
+  function riskCards(types) {
+    const cards = [];
+    atRisk.forEach(({ j, risks }) => {
+      const rel = risks.filter(r => types.includes(r.type));
+      if (!rel.length) return;
+      const sev = rel.some(r => r.severity === 'high') ? 'high' : 'medium';
+      const detail = rel.map(r => `<div>${r.label}${r.suggestion ? `<div style="color:#15803d;margin-top:2px">→ ${r.suggestion}</div>` : ''}</div>`).join('<div style="height:5px"></div>');
+      cards.push(`<div class="kan-card" style="border-left-color:${sevColor(sev)}">
+        <div class="kan-card-title">${j.name}</div>
+        <div class="kan-card-sub">${cardSub(j)}</div>
+        <div class="kan-card-detail">${detail}</div>
+        <div class="kan-card-actions">${viewBtn(j)}</div>
+      </div>`);
     });
-    html += '</div></details>';
+    return cards;
   }
 
-  // Upcoming (collapsible — collapsed by default to save space)
-  if (!upcoming.length) {
-    html += `<div style="font-size:12px;font-weight:600;color:#888;text-transform:uppercase;letter-spacing:.05em;margin-bottom:.5rem">Upcoming (next 3 months)</div>`;
-    html += `<div class="card" style="padding:1rem 1.25rem;color:#888;font-size:13px">No jobs starting or ending in the next 3 months.</div>`;
-  } else {
-    html += `<details style="margin-bottom:.5rem"><summary style="cursor:pointer;font-size:12px;font-weight:600;color:#888;text-transform:uppercase;letter-spacing:.05em;padding:.4rem 0;user-select:none">Upcoming (next 3 months) — ${upcoming.length}</summary><div style="margin-top:.5rem">`;
-    html += `<div class="card" style="padding:0;overflow:hidden"><table style="font-size:13px"><thead><tr><th>Month</th><th>Job ref</th><th>Client</th><th>Event</th><th>Contract</th><th>Retention</th><th></th></tr></thead><tbody>`;
-    upcoming.forEach(u => {
-      const isEnd = u.type === 'ending';
-      const badge = isEnd
-        ? '<span style="background:#fef9c3;color:#a16207;padding:2px 8px;border-radius:8px;font-size:11px">Completing</span>'
-        : '<span style="background:#dbeafe;color:#1d4ed8;padding:2px 8px;border-radius:8px;font-size:11px">Starting</span>';
-      const ret = isEnd ? fmt(getRetentionTotal(u.j) / 2) + ' retention due' : '—';
-      html += `<tr style="border-bottom:1px solid #f0f0f0">
-        <td style="white-space:nowrap;font-weight:500">${monthLabel(u.month)}</td>
-        <td><strong>${u.j.name}</strong>${u.j.projectName ? '<div style="font-size:11px;color:#888">' + u.j.projectName + '</div>' : ''}</td>
-        <td>${u.j.client||'—'}</td>
-        <td>${badge}</td>
-        <td>${fmt(u.j.contract)}</td>
-        <td style="font-size:12px;color:#888">${ret}</td>
-        <td><button class="btn btn-sm" onclick="showTab('actuals');setActualsJob(${jobs.indexOf(u.j)})">Actuals</button></td>
-      </tr>`;
-    });
-    html += '</tbody></table></div></div></details>';
-  }
+  const unallocCards = unallocMonths.map(m => {
+    const u = unallocatedCosts[m];
+    const parts = [u.labour>0?'Labour '+fmt(u.labour):'', u.materials>0?'Materials '+fmt(u.materials):''].filter(Boolean).join(' · ');
+    return `<div class="kan-card" style="border-left-color:#c2410c">
+      <div class="kan-card-title">${monthLabel(m)}</div>
+      <div class="kan-card-detail">${parts}</div>
+      <div class="kan-card-sub" style="margin-top:6px;color:#c2410c">⚠ Not coded to a job in QB — allocate it there</div>
+    </div>`;
+  });
+
+  const upcomingCards = upcoming.map(u => {
+    const isEnd = u.type === 'ending';
+    const ev = isEnd ? `Completing ${monthLabel(u.month)}` : `Starting ${monthLabel(u.month)}`;
+    const ret = isEnd ? ` · ${fmt(getRetentionTotal(u.j) / 2)} retention due` : '';
+    return `<div class="kan-card" style="border-left-color:${isEnd?'#a16207':'#1d4ed8'}">
+      <div class="kan-card-title">${u.j.name}</div>
+      <div class="kan-card-sub">${cardSub(u.j)}</div>
+      <div class="kan-card-detail">${ev}${ret}</div>
+      <div class="kan-card-actions">${viewBtn(u.j)}</div>
+    </div>`;
+  });
+
+  const columns = [
+    { title: 'Needs billing',          icon: '🟠', cards: riskCards(['needs-billing']) },
+    { title: 'Billing past end',       icon: '🔴', cards: riskCards(['billing-overrun']) },
+    { title: 'Costs past end',         icon: '🟡', cards: riskCards(['costs-after-billing']) },
+    { title: 'Cost / billing at risk', icon: '⚠️', cards: riskCards(['cost','cost-pace','billing','margin']) },
+    { title: 'Unallocated costs',      icon: '🟠', cards: unallocCards },
+    { title: 'Upcoming · 3 mo',        icon: '🔵', cards: upcomingCards },
+  ];
+
+  let html = `<div style="font-size:12px;font-weight:600;color:#888;text-transform:uppercase;letter-spacing:.05em;margin-bottom:.75rem">Needs attention</div><div class="kanban">`;
+  columns.forEach(c => {
+    html += `<div class="kan-col">
+      <div class="kan-col-head">${c.icon} ${c.title}<span class="kan-count">${c.cards.length}</span></div>
+      ${c.cards.length ? c.cards.join('') : '<div class="kan-empty">Nothing here ✓</div>'}
+    </div>`;
+  });
+  html += `</div>`;
 
   el.innerHTML = html;
 }
@@ -2916,7 +2922,7 @@ function resetForecastControls() {
   if (lenEl) lenEl.value = '12';
   savePrefs();
   renderForecastSection();
-  renderSummary();
+  renderPortfolio();
 }
 
 function renderForecastSection() {
@@ -2933,7 +2939,7 @@ function renderForecastSection() {
       appStartMonth = parsed;
       sumFromMonth  = parsed;
       savePrefs();
-      renderSummary(); // keep summary in sync when date changes
+      renderPortfolio(); // Portfolio metrics are date-ranged — keep in sync when date changes
     }
   }
   // Always ensure appStartMonth mirrors fcStartMonth (catches first-load case)
@@ -3852,7 +3858,7 @@ async function captureRetention(p, btnEl) {
 }
 
 function renderAll() {
-  renderSummary(); renderJobsTable(); renderActualsSection(); renderVarianceReport();
+  renderSummary(); renderPortfolio(); renderJobsTable(); renderActualsSection(); renderVarianceReport();
   renderLiabilitiesSection(); renderRetentionsSection(); renderCreditsSection(); renderForecastSection();
 }
 
@@ -3860,7 +3866,7 @@ function renderAll() {
 // both the primary group nav and the secondary sub-tab row in sync, so programmatic
 // calls (e.g. a Summary metric jumping to Retentions) light up the right group too.
 const TAB_GROUPS = {
-  overview: ['summary', 'forecast'],
+  overview: ['summary', 'portfolio', 'forecast'],
   jobs:     ['jobs', 'actuals', 'variance'],
   cash:     ['liabilities', 'retentions', 'credits'],
 };
