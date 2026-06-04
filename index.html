@@ -157,7 +157,7 @@
     </form>
     <div class="login-error" id="login-error"></div>
     <div class="login-hint">Shared login for Stuart &amp; accountant</div>
-    <div style="margin-top:1.5rem;font-size:10px;color:#bbb;font-family:monospace">v2.85-Jun-04</div>
+    <div style="margin-top:1.5rem;font-size:10px;color:#bbb;font-family:monospace">v2.86-Jun-04</div>
   </div>
 </div>
 
@@ -178,7 +178,7 @@
     </div>
     <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
       <span class="saving" id="saving-indicator"></span>
-      <span style="font-size:10px;color:#bbb;font-family:monospace;user-select:none" title="Build version">v2.85-Jun-04</span>
+      <span style="font-size:10px;color:#bbb;font-family:monospace;user-select:none" title="Build version">v2.86-Jun-04</span>
       <button id="btn-job-template" class="btn tab-btn-jobs" style="display:none" onclick="downloadCsvTemplate()">⬇ Job template</button>
       <button id="btn-import-jobs" class="btn tab-btn-jobs" style="display:none" onclick="document.getElementById('csv-file-input').click()">⬆ Import jobs</button>
       <button id="btn-actuals-template" class="btn tab-btn-actuals" style="display:none" onclick="downloadActualsTemplate()">⬇ Actuals template</button>
@@ -203,6 +203,7 @@
     <button class="navp active" data-group="overview" onclick="showTab('summary')">Overview</button>
     <button class="navp" data-group="jobs" onclick="showTab('jobs')">Jobs</button>
     <button class="navp" data-group="cash" onclick="showTab('liabilities')">Cash items</button>
+    <button class="navp" data-group="qbdata" onclick="showTab('qbdata')">QB Data</button>
   </div>
   <div class="tabs">
     <button class="tab subtab grp-overview active" data-tab="summary" onclick="showTab('summary')">Summary</button>
@@ -214,6 +215,7 @@
     <button class="tab subtab grp-cash" data-tab="liabilities" style="display:none" onclick="showTab('liabilities')">Liabilities</button>
     <button class="tab subtab grp-cash" data-tab="retentions" style="display:none" onclick="showTab('retentions')">Retentions</button>
     <button class="tab subtab grp-cash" data-tab="credits" style="display:none" onclick="showTab('credits')">Credits</button>
+    <button class="tab subtab grp-qbdata" data-tab="qbdata" style="display:none" onclick="showTab('qbdata')">QB Data</button>
   </div>
 
   <div id="summary" class="section active"><div class="empty-state">Connecting...</div></div>
@@ -224,6 +226,7 @@
   <div id="liabilities" class="section"></div>
   <div id="retentions" class="section"></div>
   <div id="credits" class="section"></div>
+  <div id="qbdata" class="section"></div>
   <div id="forecast" class="section">
     <div style="display:flex;flex-wrap:wrap;align-items:flex-end;gap:16px;margin-bottom:1.25rem;background:#fff;border:1px solid #e8e8e8;border-radius:10px;padding:1rem 1.25rem;">
       <div>
@@ -599,6 +602,7 @@ let liabilities = [];
 let credits = [];
 let unallocatedCosts = {}; // { [month]: { labour, materials } } — from QB bills with no E-number
 let vatInput = {}; // { [month]: input_vat } — company-level input VAT paid on purchases (from QB bill tax)
+let qbDiagnostics = null; // last QB sync's read-only diagnostics payload (for the QB Data page)
 let editCreditIdx = null;
 let editIdx = null;
 let editLiabIdx = null;
@@ -1384,6 +1388,75 @@ async function deleteLiability(idx) {
   const id = liabilities[idx].id;
   liabilities.splice(idx, 1);
   renderAll(); await dbDeleteLiab(id);
+}
+
+// QB Data tab — read-only view of everything the last sync pulled from QuickBooks,
+// so it can be eyeballed and verified before any newly-captured data feeds the forecast.
+function renderQBData() {
+  const el = document.getElementById('qbdata');
+  if (!el) return;
+  if (!qbDiagnostics) {
+    try { const s = localStorage.getItem('rf_qbDiag'); if (s) qbDiagnostics = JSON.parse(s); } catch (e) {}
+  }
+  const d = qbDiagnostics;
+  if (!d) { el.innerHTML = '<div class="empty-state">No QB data yet — click "⟳ Sync from QB" to pull and review what QuickBooks holds.</div>'; return; }
+
+  const money = (n) => '£' + Math.round(n || 0).toLocaleString('en-GB');
+  const mSort = (obj) => Object.keys(obj || {}).sort();
+
+  let html = '';
+  const c = d.counts || {};
+  const syncedStr = d.syncedAt ? new Date(d.syncedAt).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : '';
+  html += `<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:.75rem">
+    <div style="font-size:12px;font-weight:600;color:#888;text-transform:uppercase;letter-spacing:.05em">QB Data — what was pulled${syncedStr ? ` · synced ${syncedStr}` : ''}</div>
+    <button class="btn btn-sm" onclick="qboSync()">⟳ Re-sync</button>
+  </div>`;
+  html += `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px;margin-bottom:1.25rem">`;
+  [['Invoices', c.invoices], ['Credit memos', c.creditMemos], ['Bills', c.bills], ['Purchases', c.purchases], ['Vendor credits', c.vendorCredits], ['Customers', c.customers]].forEach(([k, v]) => {
+    html += `<div class="metric" style="padding:10px 12px"><div class="metric-label">${k}</div><div class="metric-value" style="font-size:18px">${v ?? 0}</div></div>`;
+  });
+  html += `</div>`;
+
+  // Newly captured (not yet in forecast)
+  const nc = d.newlyCaptured || {};
+  html += `<div style="background:#fff7ed;border:1px solid #fed7aa;border-radius:10px;padding:1rem 1.25rem;margin-bottom:1.25rem">
+    <div style="font-size:13px;font-weight:600;color:#c2410c;margin-bottom:6px">Newly captured — not yet in your forecast</div>
+    <div style="font-size:12px;color:#92400e;margin-bottom:10px">${nc.note || ''}</div>`;
+  const pbm = nc.purchasesByMonth || {};
+  if (mSort(pbm).length) {
+    html += `<div style="font-size:12px;font-weight:600;color:#555;margin:.5rem 0 .25rem">Purchases (card / bank / expense) by month</div><table style="font-size:12px;margin-bottom:.5rem"><thead><tr><th>Month</th><th style="text-align:right">Job-coded</th><th style="text-align:right">Company</th></tr></thead><tbody>`;
+    mSort(pbm).forEach(m => { const v = pbm[m]; html += `<tr><td>${monthLabel(m)}</td><td style="text-align:right">${money(v.job)}</td><td style="text-align:right">${money(v.company)}</td></tr>`; });
+    html += `</tbody></table>`;
+  }
+  const oh = nc.companyOverheadByMonth || {}, pr = nc.companyPayrollByMonth || {};
+  const ohpMonths = Array.from(new Set([...mSort(oh), ...mSort(pr)])).sort();
+  if (ohpMonths.length) {
+    html += `<div style="font-size:12px;font-weight:600;color:#555;margin:.5rem 0 .25rem">Company overheads &amp; PAYE/payroll (no job) by month</div><table style="font-size:12px"><thead><tr><th>Month</th><th style="text-align:right">Overheads</th><th style="text-align:right">PAYE / payroll</th></tr></thead><tbody>`;
+    ohpMonths.forEach(m => { html += `<tr><td>${monthLabel(m)}</td><td style="text-align:right">${oh[m] ? money(oh[m]) : '—'}</td><td style="text-align:right">${pr[m] ? money(pr[m]) : '—'}</td></tr>`; });
+    html += `</tbody></table>`;
+  }
+  if (!mSort(pbm).length && !ohpMonths.length) html += `<div style="font-size:12px;color:#92400e">None found in the current period.</div>`;
+  html += `</div>`;
+
+  // Per-job extracted (already in forecast)
+  const pj = d.perJob || [];
+  if (pj.length) {
+    html += `<div style="font-size:12px;font-weight:600;color:#888;text-transform:uppercase;letter-spacing:.05em;margin-bottom:.5rem">Per job — extracted from QB (already in forecast)</div>
+    <div class="card" style="padding:0;overflow-x:auto;margin-bottom:1.25rem"><table style="font-size:12px"><thead><tr><th>Job</th><th>Project</th><th style="text-align:right">Billing</th><th style="text-align:right">Retention</th><th style="text-align:right">CIS</th><th style="text-align:right">VAT</th><th style="text-align:right">Labour</th><th style="text-align:right">Materials</th><th style="text-align:right">Overhead</th></tr></thead><tbody>`;
+    pj.forEach(j => { html += `<tr><td><strong>${j.eNum}</strong></td><td style="color:#888">${j.name || ''}</td><td style="text-align:right">${money(j.billing)}</td><td style="text-align:right">${money(j.retention)}</td><td style="text-align:right">${money(j.cis)}</td><td style="text-align:right">${money(j.vat)}</td><td style="text-align:right">${money(j.labour)}</td><td style="text-align:right">${money(j.materials)}</td><td style="text-align:right">${money(j.overhead)}</td></tr>`; });
+    html += `</tbody></table></div>`;
+  }
+
+  // Transaction list — how each line was categorised ('other' flagged for review)
+  const txns = d.transactions || [];
+  if (txns.length) {
+    html += `<div style="font-size:12px;font-weight:600;color:#888;text-transform:uppercase;letter-spacing:.05em;margin-bottom:.5rem">Transactions — how each line was categorised (${txns.length}${txns.length >= 600 ? '+, capped' : ''})</div>
+    <div class="card" style="padding:0;overflow-x:auto;max-height:480px;overflow-y:auto"><table style="font-size:12px"><thead><tr><th>Date</th><th>Type</th><th>Vendor</th><th>Account</th><th style="text-align:right">Amount</th><th style="text-align:right">VAT</th><th>Job</th><th>Category</th></tr></thead><tbody>`;
+    txns.forEach(t => { const isOther = t.category === 'other'; html += `<tr><td style="white-space:nowrap">${t.date}</td><td>${t.type}</td><td>${t.vendor || '—'}</td><td style="color:#888">${t.account}</td><td style="text-align:right">${money(t.amount)}</td><td style="text-align:right">${t.vat ? money(t.vat) : '—'}</td><td>${t.job || '—'}</td><td style="color:${isOther ? '#dc2626' : '#555'};font-weight:${isOther ? '600' : '400'}">${t.category}</td></tr>`; });
+    html += `</tbody></table></div>`;
+  }
+
+  el.innerHTML = html;
 }
 
 // Portfolio overview tab — whole-portfolio (not date-ranged) headline metrics.
@@ -3860,7 +3933,7 @@ async function captureRetention(p, btnEl) {
 
 function renderAll() {
   renderSummary(); renderPortfolio(); renderJobsTable(); renderActualsSection(); renderVarianceReport();
-  renderLiabilitiesSection(); renderRetentionsSection(); renderCreditsSection(); renderForecastSection();
+  renderLiabilitiesSection(); renderRetentionsSection(); renderCreditsSection(); renderForecastSection(); renderQBData();
 }
 
 // Two-level navigation. Each section id belongs to one top-level group; showTab keeps
@@ -3870,6 +3943,7 @@ const TAB_GROUPS = {
   overview: ['summary', 'portfolio', 'forecast'],
   jobs:     ['jobs', 'actuals', 'variance'],
   cash:     ['liabilities', 'retentions', 'credits'],
+  qbdata:   ['qbdata'],
 };
 function groupOf(id) { return Object.keys(TAB_GROUPS).find(g => TAB_GROUPS[g].includes(id)) || 'overview'; }
 
@@ -4389,6 +4463,13 @@ async function qboSync(silent = false) {
     if (!data.success) throw new Error(data.error || 'Sync failed');
 
     setLastSyncTime();
+
+    // Cache the read-only QB diagnostics for the QB Data page (persists across reloads)
+    if (data.diagnostics) {
+      qbDiagnostics = { ...data.diagnostics, syncedAt: new Date().toISOString() };
+      try { localStorage.setItem('rf_qbDiag', JSON.stringify(qbDiagnostics)); } catch (e) {}
+      renderQBData();
+    }
 
     const s = data.summary;
     const a = data.applied;
