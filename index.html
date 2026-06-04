@@ -145,7 +145,7 @@
     </form>
     <div class="login-error" id="login-error"></div>
     <div class="login-hint">Shared login for Stuart &amp; accountant</div>
-    <div style="margin-top:1.5rem;font-size:10px;color:#bbb;font-family:monospace">v2.82-Jun-04</div>
+    <div style="margin-top:1.5rem;font-size:10px;color:#bbb;font-family:monospace">v2.83-Jun-04</div>
   </div>
 </div>
 
@@ -166,7 +166,7 @@
     </div>
     <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
       <span class="saving" id="saving-indicator"></span>
-      <span style="font-size:10px;color:#bbb;font-family:monospace;user-select:none" title="Build version">v2.82-Jun-04</span>
+      <span style="font-size:10px;color:#bbb;font-family:monospace;user-select:none" title="Build version">v2.83-Jun-04</span>
       <button id="btn-job-template" class="btn tab-btn-jobs" style="display:none" onclick="downloadCsvTemplate()">⬇ Job template</button>
       <button id="btn-import-jobs" class="btn tab-btn-jobs" style="display:none" onclick="document.getElementById('csv-file-input').click()">⬆ Import jobs</button>
       <button id="btn-actuals-template" class="btn tab-btn-actuals" style="display:none" onclick="downloadActualsTemplate()">⬇ Actuals template</button>
@@ -3239,20 +3239,20 @@ function renderForecastSection() {
   const totNet=totGross-totRetHeld;
   const totCash=totCashSum;
 
-  let fctbl = `<div style="font-size:12px;font-weight:600;color:#555;margin-bottom:.5rem">Cash-flow waterfall${infoTip("Labour &amp; overhead paid the month incurred; materials &amp; their VAT on a 30-day account; billing per payment terms; retention excluded until invoiced. VAT settles monthly (reclaim/payment ~next month). CIS suffered is shown for reference — it's already netted into billing (full CIS in/out to come).")}</div>
-  <div class="card" style="padding:0;overflow-x:auto;margin-top:.25rem">
-  <table style="font-size:13px;white-space:nowrap">
+  let fctbl = `<div style="font-size:12px;font-weight:600;color:#555;margin-bottom:.5rem">Cash-flow waterfall<span style="font-weight:400;color:#999;margin-left:6px">— hover a column for what it includes; click + on a month to drill in</span></div>
+  <div class="card" style="padding:0;margin-top:.25rem">
+  <table style="font-size:13px;width:100%">
   <thead><tr>
     <th>Month</th>
-    <th>Costs</th>
-    <th>Liabilities</th>
-    <th>Gross billing</th>
-    <th>Ret in/out</th>
-    <th>VAT in/out</th>
-    <th>CIS in/out</th>
-    <th>Credits</th>
-    <th>Working capital</th>
-    <th>Cumulative</th>
+    <th>Costs${infoTip("Labour &amp; overhead in the month incurred; materials on a 30-day lag. Includes unallocated company costs not yet coded to a job in QB.")}</th>
+    <th>Liabilities${infoTip("Recurring company outgoings due this month — loans, hire, lease, insurance, tax and other.")}</th>
+    <th>Billing${infoTip("Gross billing before retention &amp; CIS, ex-VAT, timed by each job's payment terms.")}</th>
+    <th>Retention${infoTip("Retention held back (−) and released / received (+) this month. Net shown; green = net cash in.")}</th>
+    <th>VAT${infoTip("Output VAT collected (+), input VAT paid (−) and the monthly HMRC settlement. Net shown; usually a reclaim for RSE.")}</th>
+    <th>CIS${infoTip("CIS suffered on your billing — already netted into the Billing figure; shown here for reference.")}</th>
+    <th>Credits${infoTip("Deposits and other credits received this month.")}</th>
+    <th>Cash${infoTip("Net cash movement this month: everything in minus everything out.")}</th>
+    <th>Balance${infoTip("Running cumulative cash position — opening balance plus each month's cash.")}</th>
   </tr></thead><tbody>`;
 
   let cumulative = 0;
@@ -3311,111 +3311,68 @@ function renderForecastSection() {
         <button onclick="toggleDetail('${detailId}','btn-${ri}')" id="btn-${ri}"
           style="width:22px;height:22px;border:1px solid #ddd;border-radius:4px;background:#fff;cursor:pointer;font-size:12px;margin-right:6px;line-height:1;vertical-align:middle">+</button>${monthLabel(r.m)}
       </td>
-      <td>${r.tCTotal>0?`<strong>${fmt(r.tCTotal)}</strong>${sub(`L ${fmt(r.tL)} · M ${fmt(r.tM)} · O ${fmt(r.tO)}${(r.tUnallocLabour+r.tUnallocMaterials)>0?' · +unalloc '+fmt(r.tUnallocLabour+r.tUnallocMaterials):''}`)}`:dash}</td>
+      <td>${r.tCTotal>0?`<strong>${fmt(r.tCTotal)}</strong>`:dash}</td>
       <td>${r.tLiab>0?fmt(r.tLiab):dash}</td>
       <td>${r.tGrossBilling>0?'<strong>'+fmt(r.tGrossBilling)+'</strong>':dash}</td>
-      <td>${(r.tRetHeld>0||r.tRetFinal>0)?`<span class="${retNet>=0?'green':'red'}">${retNet>=0?'+':''}${fmt(retNet)}</span>${sub(`${r.tRetHeld>0?'held −'+fmt(r.tRetHeld):''}${r.tRetFinal>0?(r.tRetHeld>0?' · ':'')+'in +'+fmt(r.tRetFinal):''}`)}`:dash}</td>
-      <td>${(r.tOutputVat>0||r.tInputVat>0||r.vatSettlement)?`<span class="${vatNet>=0?'green':'red'}">${vatNet>=0?'+':''}${fmt(vatNet)}</span>${sub(`${r.tOutputVat>0?'coll +'+fmt(r.tOutputVat):''}${r.tInputVat>0?(r.tOutputVat>0?' · ':'')+'paid −'+fmt(r.tInputVat):''}${r.vatSettlement?' · settle '+(r.vatSettlement>=0?'+':'')+fmt(r.vatSettlement):''}`)}`:dash}</td>
-      <td>${tCis>0?`<span style="color:#888">−${fmt(tCis)}</span>${sub('in billing')}`:dash}</td>
-      <td>${totCred>0?`<span style="color:#6d28d9;font-weight:600">+${fmt(totCred)}</span>${r.tDepositExpected>0?sub('incl. deposit'):''}`:dash}</td>
+      <td>${(r.tRetHeld>0||r.tRetFinal>0)?`<span class="${retNet>=0?'green':'red'}">${retNet>=0?'+':''}${fmt(retNet)}</span>`:dash}</td>
+      <td>${(r.tOutputVat>0||r.tInputVat>0||r.vatSettlement)?`<span class="${vatNet>=0?'green':'red'}">${vatNet>=0?'+':''}${fmt(vatNet)}</span>`:dash}</td>
+      <td>${tCis>0?`<span style="color:#888">−${fmt(tCis)}</span>`:dash}</td>
+      <td>${totCred>0?`<span style="color:#6d28d9;font-weight:600">+${fmt(totCred)}</span>`:dash}</td>
       <td class="${r.cash>=0?'green':'red'}"><strong>${r.cash>=0?'+':''}${fmt(r.cash)}</strong></td>
       <td class="${cumulative>=0?'green':'red'}" style="font-style:italic;opacity:0.85">${cumulative>=0?'+':''}${fmt(cumulative)}</td>
     </tr>`;
 
     let detailHtml = `<tr id="${detailId}" style="display:none">
       <td colspan="10" style="padding:0;border-bottom:1px solid #e8e8e8">
-        <div style="background:#f8f8f8;padding:10px 14px 10px 42px">
-        <table style="width:100%;font-size:12px;border-collapse:collapse">
-        <thead><tr style="color:#888">
+        <div style="background:#f8f8f8;padding:12px 16px 12px 42px">`;
+
+    // Per-job breakdown
+    if (jobDetails.length) {
+      detailHtml += `<table style="width:100%;font-size:12px;border-collapse:collapse">
+        <thead><tr style="color:#999">
           <th style="text-align:left;padding:3px 8px;font-weight:500">Job</th>
           <th style="text-align:right;padding:3px 8px;font-weight:500">Labour</th>
           <th style="text-align:right;padding:3px 8px;font-weight:500">Materials</th>
           <th style="text-align:right;padding:3px 8px;font-weight:500">Overhead</th>
-          <th style="text-align:right;padding:3px 8px;font-weight:500">Gross billing</th>
+          <th style="text-align:right;padding:3px 8px;font-weight:500">Billing</th>
           <th style="text-align:right;padding:3px 8px;font-weight:500">Retention</th>
           <th style="text-align:right;padding:3px 8px;font-weight:500">Net billing</th>
-          <th style="text-align:right;padding:3px 8px;font-weight:500;color:#1d4ed8">Job margin</th>
+          <th style="text-align:right;padding:3px 8px;font-weight:500;color:#1d4ed8">Margin</th>
         </tr></thead><tbody>`;
-    jobDetails.forEach(d => {
-      const jMargin = d.jNet - d.jCost;
-      detailHtml += `<tr style="border-top:0.5px solid #eee">
-        <td style="padding:4px 8px"><strong>${d.name}</strong>${d.projectName ? ` <span style="color:#888;font-size:11px">— ${d.projectName}</span>` : ''}${d.client?` <span style="color:#888">— ${d.client}</span>`:''}  </td>
-        <td style="text-align:right;padding:4px 8px">${d.jL>0?fmt(d.jL):'—'}</td>
-        <td style="text-align:right;padding:4px 8px">${d.jM>0?fmt(d.jM):'—'}</td>
-        <td style="text-align:right;padding:4px 8px">${d.jO>0?fmt(d.jO):'—'}</td>
-        <td style="text-align:right;padding:4px 8px">${d.jGross>0?fmt(d.jGross):'—'}</td>
-        <td style="text-align:right;padding:4px 8px;color:#dc2626">${d.jRet>0?'-'+fmt(d.jRet):'—'}</td>
-        <td style="text-align:right;padding:4px 8px">${d.jNet>0?fmt(d.jNet):'—'}</td>
-        <td style="text-align:right;padding:4px 8px;font-weight:600" class="${jMargin>=0?'green':'red'}">${jMargin>=0?'+':''}${fmt(jMargin)}</td>
-      </tr>`;
-    });
-    if (liabDetails.length) {
-      detailHtml += `<tr style="border-top:1px solid #ddd;background:#f0f0f0">
-        <td style="padding:4px 8px;font-weight:500;color:#6d28d9" colspan="3">Liabilities this month</td>
-        <td colspan="5" style="padding:4px 8px">`;
-      liabDetails.forEach(l => { detailHtml += `<span style="color:#6d28d9;margin-right:12px">${l.name}: ${fmt(l.amount)}</span>`; });
-      detailHtml += `</td></tr>`;
-    }
-    if (creditsThisMonth.length) {
-      detailHtml += `<tr style="border-top:1px solid #ddd;background:#faf5ff">
-        <td style="padding:4px 8px;font-weight:500;color:#6d28d9" colspan="3">Credits received</td>
-        <td colspan="5" style="padding:4px 8px">`;
-      creditsThisMonth.forEach(c => { detailHtml += `<span style="color:#6d28d9;margin-right:12px">${c.name}: +${fmt(c.amount)}</span>`; });
-      detailHtml += `</td></tr>`;
+      jobDetails.forEach(d => {
+        const jMargin = d.jNet - d.jCost;
+        detailHtml += `<tr style="border-top:1px solid #eee">
+          <td style="padding:4px 8px"><strong>${d.name}</strong>${d.projectName ? ` <span style="color:#999;font-size:11px">${d.projectName}</span>` : ''}</td>
+          <td style="text-align:right;padding:4px 8px">${d.jL>0?fmt(d.jL):'—'}</td>
+          <td style="text-align:right;padding:4px 8px">${d.jM>0?fmt(d.jM):'—'}</td>
+          <td style="text-align:right;padding:4px 8px">${d.jO>0?fmt(d.jO):'—'}</td>
+          <td style="text-align:right;padding:4px 8px">${d.jGross>0?fmt(d.jGross):'—'}</td>
+          <td style="text-align:right;padding:4px 8px;color:#dc2626">${d.jRet>0?'−'+fmt(d.jRet):'—'}</td>
+          <td style="text-align:right;padding:4px 8px">${d.jNet>0?fmt(d.jNet):'—'}</td>
+          <td style="text-align:right;padding:4px 8px;font-weight:600" class="${jMargin>=0?'green':'red'}">${jMargin>=0?'+':''}${fmt(jMargin)}</td>
+        </tr>`;
+      });
+      detailHtml += `</tbody></table>`;
     }
 
-    // Unallocated costs from QB bills with no E-number reference
+    // Other cash movements this month — compact chips
+    const chips = [];
     if (r.tUnallocLabour > 0 || r.tUnallocMaterials > 0) {
-      const unallocNote = r.m === cur
-        ? 'Unallocated purchases from prior month (30-day terms) — no customer reference in QB'
-        : 'CIS labour and purchase bills with no customer reference — consider allocating to a job';
-      const unallocLabel = r.m === cur ? 'Unallocated purchases (prior month)' : 'Unallocated (no project ref)';
-      detailHtml += `<tr style="border-top:1px solid #ddd;background:#fff7ed">
-        <td style="padding:4px 8px;font-weight:500;color:#c2410c">${unallocLabel}</td>
-        <td style="text-align:right;padding:4px 8px;color:#c2410c">${r.tUnallocLabour>0?fmt(r.tUnallocLabour):'—'}</td>
-        <td style="text-align:right;padding:4px 8px;color:#c2410c">${r.tUnallocMaterials>0?fmt(r.tUnallocMaterials):'—'}</td>
-        <td colspan="5" style="padding:4px 8px;font-size:11px;color:#92400e">${unallocNote}</td>
-      </tr>`;
+      const parts = [r.tUnallocLabour>0?'labour '+fmt(r.tUnallocLabour):'', r.tUnallocMaterials>0?'materials '+fmt(r.tUnallocMaterials):''].filter(Boolean).join(' · ');
+      chips.push(`<span style="background:#fff7ed;color:#c2410c;border:1px solid #fed7aa;border-radius:6px;padding:3px 9px">⚠ Unallocated (no job ref in QB): ${parts} — code it in QB</span>`);
     }
+    liabDetails.forEach(l => chips.push(`<span style="background:#f5f0ff;color:#6d28d9;border:1px solid #ddd6fe;border-radius:6px;padding:3px 9px">${l.name}: −${fmt(l.amount)}</span>`));
+    creditsThisMonth.forEach(c => chips.push(`<span style="background:#faf5ff;color:#6d28d9;border:1px solid #e9d5ff;border-radius:6px;padding:3px 9px">${c.name}: +${fmt(c.amount)}</span>`));
+    if (r.tRetFinal > 0) chips.push(`<span style="background:#f0fdf4;color:#15803d;border:1px solid #bbf7d0;border-radius:6px;padding:3px 9px">Retention received${r.m >= cur ? ' (scheduled)' : ''}: +${fmt(r.tRetFinal)}</span>`);
+    if (chips.length) detailHtml += `<div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:10px;font-size:11px">${chips.join('')}</div>`;
 
-    // Totals footer
-    const totalGrossMargin = jobDetails.reduce((s, d) => s + d.jNet - d.jCost, 0);
-    const totalCredits = creditsThisMonth.reduce((s, c) => s + c.amount, 0);
-    const netBalance = r.cash; // use pre-calculated cash which includes all components
-    detailHtml += `<tr style="border-top:2px solid #ddd;background:#f0f0f0;font-weight:600;font-size:12px">
-      <td colspan="6" style="padding:5px 8px">Gross job margin (billing − job costs)</td>
-      <td colspan="2" style="text-align:right;padding:5px 8px" class="${totalGrossMargin>=0?'green':'red'}">${totalGrossMargin>=0?'+':''}${fmt(totalGrossMargin)}</td>
-    </tr>`;
-    if (r.tUnallocLabour > 0 || r.tUnallocMaterials > 0) {
-      detailHtml += `<tr style="background:#fff7ed;font-size:12px">
-        <td colspan="6" style="padding:4px 8px;color:#c2410c">Less: unallocated costs</td>
-        <td colspan="2" style="text-align:right;padding:4px 8px;color:#c2410c">-${fmt(r.tUnallocLabour + r.tUnallocMaterials)}</td>
-      </tr>`;
-    }
-    if (r.tLiab > 0) {
-      detailHtml += `<tr style="background:#f5f0ff;font-size:12px">
-        <td colspan="6" style="padding:4px 8px;color:#6d28d9">Less: liabilities this month</td>
-        <td colspan="2" style="text-align:right;padding:4px 8px;color:#6d28d9">-${fmt(r.tLiab)}</td>
-      </tr>`;
-    }
-    if (totalCredits > 0) {
-      detailHtml += `<tr style="background:#faf5ff;font-size:12px">
-        <td colspan="6" style="padding:4px 8px;color:#6d28d9">Plus: credits received</td>
-        <td colspan="2" style="text-align:right;padding:4px 8px;color:#6d28d9">+${fmt(totalCredits)}</td>
-      </tr>`;
-    }
-    if (r.tRetFinal > 0) {
-      detailHtml += `<tr style="background:#f0fdf4;font-size:12px">
-        <td colspan="6" style="padding:4px 8px;color:#15803d">Plus: retention received${r.m >= cur ? ' (scheduled)' : ''}</td>
-        <td colspan="2" style="text-align:right;padding:4px 8px;color:#15803d">+${fmt(r.tRetFinal)}</td>
-      </tr>`;
-    }
-    detailHtml += `<tr style="background:#e8f0fe;font-weight:700;font-size:12px;border-top:1px solid #c7d7f4">
-      <td colspan="6" style="padding:5px 8px">Net balance this month</td>
-      <td colspan="2" style="text-align:right;padding:5px 8px" class="${netBalance>=0?'green':'red'}">${netBalance>=0?'+':''}${fmt(netBalance)}</td>
-    </tr>`;
+    // Net cash strip
+    detailHtml += `<div style="margin-top:10px;padding-top:8px;border-top:1px solid #e0e0e0;font-size:12px;display:flex;justify-content:space-between;align-items:center">
+        <span style="color:#888">Net cash this month</span>
+        <strong class="${r.cash>=0?'green':'red'}">${r.cash>=0?'+':''}${fmt(r.cash)}</strong>
+      </div>`;
 
-    detailHtml += `</tbody></table></div></td></tr>`;
+    detailHtml += `</div></td></tr>`;
     fctbl += detailHtml;
   });
 
