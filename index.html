@@ -157,7 +157,7 @@
     </form>
     <div class="login-error" id="login-error"></div>
     <div class="login-hint">Shared login for Stuart &amp; accountant</div>
-    <div style="margin-top:1.5rem;font-size:10px;color:#bbb;font-family:monospace">v2.84-Jun-04</div>
+    <div style="margin-top:1.5rem;font-size:10px;color:#bbb;font-family:monospace">v2.85-Jun-04</div>
   </div>
 </div>
 
@@ -178,7 +178,7 @@
     </div>
     <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
       <span class="saving" id="saving-indicator"></span>
-      <span style="font-size:10px;color:#bbb;font-family:monospace;user-select:none" title="Build version">v2.84-Jun-04</span>
+      <span style="font-size:10px;color:#bbb;font-family:monospace;user-select:none" title="Build version">v2.85-Jun-04</span>
       <button id="btn-job-template" class="btn tab-btn-jobs" style="display:none" onclick="downloadCsvTemplate()">⬇ Job template</button>
       <button id="btn-import-jobs" class="btn tab-btn-jobs" style="display:none" onclick="document.getElementById('csv-file-input').click()">⬆ Import jobs</button>
       <button id="btn-actuals-template" class="btn tab-btn-actuals" style="display:none" onclick="downloadActualsTemplate()">⬇ Actuals template</button>
@@ -1426,7 +1426,7 @@ function renderPortfolio() {
     : `<span style="font-size:11px;color:#888">No start date set — <a href="#" onclick="showTab('forecast');return false" style="color:#1d4ed8;text-decoration:none">set on Forecast tab ↗</a></span>`;
   el.innerHTML = `<div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:.5rem">
     <div style="font-size:12px;font-weight:600;color:#888;text-transform:uppercase;letter-spacing:.05em">Portfolio overview${fromLabel}</div>
-    ${fromNote}
+    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">${fromNote}<button id="btn-analyse-actuals" class="btn btn-sm" onclick="analyseActuals()" style="white-space:nowrap">✦ Analyse actuals</button></div>
   </div>
   <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-bottom:1.5rem">
     <div class="metric"><div class="metric-label">Total contracted value</div><div class="metric-value">${fmt(totalContract)}</div><div style="font-size:11px;color:#888;margin-top:2px">${fromM ? 'Jobs active from ' + monthLabel(fromM) : jobs.length + ' jobs, ' + activeJobs.length + ' active'}</div></div>
@@ -1436,7 +1436,8 @@ function renderPortfolio() {
     <div class="metric"><div class="metric-label">Actual profit to date</div><div class="metric-value ${actProfit !== null ? (actProfit >= 0 ? 'green' : 'red') : ''}">${actProfit !== null ? fmt(actProfit) : '—'}</div><div style="font-size:11px;color:#888;margin-top:2px">${actMarginPct !== null ? fmtPct(actMarginPct) + ' margin' : 'No actuals yet'}</div></div>
     <div class="metric"><div class="metric-label">Actual margin to date</div><div class="metric-value ${actMarginPct !== null ? (actMarginPct >= fcMarginPct ? 'green' : 'red') : ''}">${actMarginPct !== null ? fmtPct(actMarginPct) : '—'}</div><div style="font-size:11px;color:#888;margin-top:2px">${actMarginPct !== null ? (actMarginPct >= fcMarginPct ? 'Ahead of forecast' : 'Behind forecast') : 'No actuals yet'}</div></div>
     <div class="metric" style="cursor:pointer" onclick="showTab('retentions')"><div class="metric-label">Retention outstanding ↗</div><div class="metric-value red">${fmt(retOutstanding)}</div><div style="font-size:11px;color:#888;margin-top:2px">Held minus released</div></div>
-  </div>`;
+  </div>
+  <div id="portfolio-ai-panel" class="card" style="display:none"></div>`;
 }
 
 function renderSummary() {
@@ -4565,6 +4566,73 @@ function exportForecastPDF() {
 }
 
 // ── AI Supplier Proposal Generator ────────────────────────────────────────────
+// Build an actual-vs-forecast data context for the AI analysis (plain-summary mode).
+function buildAnalysisContext() {
+  const cur = getCurrentMonth();
+  const allMonths = getForecastMonths();
+  let cumulative = 0;
+  const monthly = allMonths.map(m => {
+    const mPrev = prevMonth(m), mPrev2 = prevMonth(mPrev);
+    let tL=0, tM=0, tO=0, tGross=0, tRet=0;
+    jobs.forEach(j => {
+      const ms = getEffectiveMonths(j);
+      const hasActuals = Object.keys(j.actuals||{}).some(mo => { const a = j.actuals[mo]; return a && Object.keys(a).some(f => a[f]!==undefined && a[f]!==0); });
+      const useOffset = !hasActuals;
+      if (ms.includes(m)) { tL += buildSchedule(j,'labour')[m]?.value||0; tO += buildSchedule(j,'overhead')[m]?.value||0; }
+      if (ms.includes(mPrev)) tM += buildSchedule(j,'materials')[mPrev]?.value||0;
+      const bm = useOffset ? (j.paymentTerms===0?m:(j.paymentTerms>=2?mPrev2:mPrev)) : m;
+      const pb = getJobBillingForMonth(j, bm);
+      tGross += pb.gross; tRet += pb.ret;
+    });
+    const tC = tL+tM+tO, tLiab = getTotalLiabilitiesForMonth(m), tNet = tGross - tRet;
+    const cash = tNet + getRetentionReceivedForMonth(m) + getCreditReceivedForMonth(m) - tC - tLiab;
+    cumulative += cash;
+    return { m, net:Math.round(tNet), cost:Math.round(tC), cash:Math.round(cash), cum:Math.round(cumulative), isActual:m<cur };
+  });
+  const jobLines = jobs.filter(isActive).map(j => {
+    const bs = getSummary(j, 'billing');
+    const budgetCost = netLabourTotal(j) + j.materials + j.overhead;
+    let actCost = 0;
+    Object.keys(j.actuals||{}).forEach(mo => { const a = j.actuals[mo]; if (a) actCost += (a.labour||0)+(a.materials||0)+(a.overhead||0); });
+    return `${j.name} (${j.client||'—'}): contract £${Math.round(j.contract).toLocaleString()}, billed £${Math.round(bs.actualSpent).toLocaleString()}, still to bill £${Math.round(bs.balance).toLocaleString()}; budget cost £${Math.round(budgetCost).toLocaleString()}, actual cost to date £${Math.round(actCost).toLocaleString()}`;
+  }).join('\n');
+  const dips = monthly.filter(r => r.cum < 0).map(r => `${monthLabel(r.m)} (£${r.cum.toLocaleString()})`).join(', ') || 'none';
+  return `ROOFING (SOUTH EAST) LIMITED — ACTUAL vs FORECAST (as at ${monthLabel(cur)})\n\nACTIVE JOBS:\n${jobLines || 'none'}\n\nMONTHLY CASHFLOW (net billing / costs / net cash / cumulative):\n${monthly.map(r => `${monthLabel(r.m)}: billing £${r.net.toLocaleString()}, costs £${r.cost.toLocaleString()}, net £${r.cash.toLocaleString()}, cumulative £${r.cum.toLocaleString()} [${r.isActual?'actual':'forecast'}]`).join('\n')}\n\nMonths where cumulative cash goes negative: ${dips}.`;
+}
+
+// AI 'analyse actuals' — plain-English business-health summary, rendered inline on Portfolio.
+async function analyseActuals() {
+  const panel = document.getElementById('portfolio-ai-panel');
+  const btn = document.getElementById('btn-analyse-actuals');
+  if (!panel) return;
+  if (!jobs.length) { panel.style.display = 'block'; panel.innerHTML = '<div style="color:#888;font-size:13px">No jobs to analyse yet.</div>'; return; }
+  panel.style.display = 'block';
+  panel.innerHTML = '<div style="color:#888;font-size:13px">✦ Analysing with AI — please wait…</div>';
+  if (btn) { btn.disabled = true; btn.textContent = '✦ Analysing…'; }
+  try {
+    const dataContext = buildAnalysisContext();
+    const res = await fetch(QBO_FUNCTIONS_BASE + '/AI-function', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + sbAuthToken() },
+      body: JSON.stringify({ dataContext, mode: 'analysis' })
+    });
+    const data = await res.json();
+    if (!data.success) throw new Error(data.error || 'Analysis failed');
+    const text = data.text || 'No response received.';
+    const formatted = text.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\n\n/g,'</p><p>').replace(/\n/g,'<br>');
+    panel.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+        <div style="font-size:12px;font-weight:600;color:#888;text-transform:uppercase;letter-spacing:.05em">✦ AI summary</div>
+        <button class="btn btn-sm" onclick="document.getElementById('portfolio-ai-panel').style.display='none'">Dismiss</button>
+      </div>
+      <div style="font-size:13px;line-height:1.6;color:#1a1a1a"><p>${formatted}</p></div>
+      <div style="font-size:10px;color:#aaa;margin-top:10px">Generated by Claude — sense-check before acting. Data as at ${new Date().toLocaleDateString('en-GB')}.</div>`;
+  } catch (err) {
+    panel.innerHTML = `<div style="color:#dc2626;font-size:13px">✗ ${err.message}</div>`;
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '✦ Analyse actuals'; }
+  }
+}
+
 async function generateSupplierProposal() {
   const allMonths = getForecastMonths();
   if (!allMonths.length) { alert('No forecast range selected.'); return; }
