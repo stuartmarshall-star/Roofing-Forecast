@@ -157,7 +157,7 @@
     </form>
     <div class="login-error" id="login-error"></div>
     <div class="login-hint">Shared login for Stuart &amp; accountant</div>
-    <div style="margin-top:1.5rem;font-size:10px;color:#bbb;font-family:monospace">v2.88-Jun-05</div>
+    <div style="margin-top:1.5rem;font-size:10px;color:#bbb;font-family:monospace">v2.89-Jun-05</div>
   </div>
 </div>
 
@@ -178,7 +178,7 @@
     </div>
     <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
       <span class="saving" id="saving-indicator"></span>
-      <span style="font-size:10px;color:#bbb;font-family:monospace;user-select:none" title="Build version">v2.88-Jun-05</span>
+      <span style="font-size:10px;color:#bbb;font-family:monospace;user-select:none" title="Build version">v2.89-Jun-05</span>
       <button id="btn-job-template" class="btn tab-btn-jobs" style="display:none" onclick="downloadCsvTemplate()">⬇ Job template</button>
       <button id="btn-import-jobs" class="btn tab-btn-jobs" style="display:none" onclick="document.getElementById('csv-file-input').click()">⬆ Import jobs</button>
       <button id="btn-actuals-template" class="btn tab-btn-actuals" style="display:none" onclick="downloadActualsTemplate()">⬇ Actuals template</button>
@@ -1122,7 +1122,19 @@ function addMonths(ym, n) {
 function prevMonth(ym) { return addMonths(ym, -1); }
 
 function getRetentionTotal(job) {
-  return job.contract * (job.retention / 100);
+  // Prefer ACTUAL retention held from QB (sum of per-month a.retention set by the sync) plus a
+  // 3% estimate on any remaining un-invoiced contract; fall back to 3% × contract when there
+  // are no actuals yet (a brand-new job not yet invoiced). This makes retention follow reality
+  // — including variations that push billing above the contract — instead of a flat 3%.
+  const actuals = job.actuals || {};
+  const hasActualRet = Object.values(actuals).some(a => a && a.retention != null);
+  if (!hasActualRet) return job.contract * (job.retention / 100);
+  const actualHeld = Object.values(actuals).reduce((s, a) => s + (a && a.retention ? a.retention : 0), 0);
+  const billedNet  = Object.values(actuals).reduce((s, a) => s + (a && a.billing   ? a.billing   : 0), 0);
+  const remainingNet = Math.max(0, netBillingTotal(job) - billedNet);
+  const retRate = job.retention / 100;
+  const remainingRet = retRate < 1 ? remainingNet * retRate / (1 - retRate) : 0;
+  return actualHeld + remainingRet;
 }
 
 function getFirstMoietyMonth(job) {
@@ -1203,6 +1215,13 @@ function getJobBillingForMonth(j, month) {
       const depositNet = depositCredit.amount * (1 - (j.retention || 0) / 100);
       netBilling = Math.max(0, netBilling - depositNet);
     }
+  }
+  // Use the ACTUAL retention held from QB for invoiced months (a.retention, set by the sync);
+  // fall back to the job's retention % for forecast months not yet invoiced.
+  const a = j.actuals && j.actuals[month];
+  if (a && a.retention != null && a.billing != null) {
+    const ret = a.retention;
+    return { gross: netBilling + ret, ret };
   }
   const retRate = j.retention / 100;
   const gross = retRate < 1 ? netBilling / (1 - retRate) : netBilling;
