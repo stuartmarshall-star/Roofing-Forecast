@@ -157,7 +157,7 @@
     </form>
     <div class="login-error" id="login-error"></div>
     <div class="login-hint">Shared login for Stuart &amp; accountant</div>
-    <div style="margin-top:1.5rem;font-size:10px;color:#bbb;font-family:monospace">v2.87-Jun-05</div>
+    <div style="margin-top:1.5rem;font-size:10px;color:#bbb;font-family:monospace">v2.88-Jun-05</div>
   </div>
 </div>
 
@@ -178,7 +178,7 @@
     </div>
     <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
       <span class="saving" id="saving-indicator"></span>
-      <span style="font-size:10px;color:#bbb;font-family:monospace;user-select:none" title="Build version">v2.87-Jun-05</span>
+      <span style="font-size:10px;color:#bbb;font-family:monospace;user-select:none" title="Build version">v2.88-Jun-05</span>
       <button id="btn-job-template" class="btn tab-btn-jobs" style="display:none" onclick="downloadCsvTemplate()">⬇ Job template</button>
       <button id="btn-import-jobs" class="btn tab-btn-jobs" style="display:none" onclick="document.getElementById('csv-file-input').click()">⬆ Import jobs</button>
       <button id="btn-actuals-template" class="btn tab-btn-actuals" style="display:none" onclick="downloadActualsTemplate()">⬇ Actuals template</button>
@@ -226,7 +226,15 @@
   <div id="liabilities" class="section"></div>
   <div id="retentions" class="section"></div>
   <div id="credits" class="section"></div>
-  <div id="qbdata" class="section"></div>
+  <div id="qbdata" class="section">
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:1rem">
+      <input id="qb-inspect-input" placeholder="Inspect a job, e.g. E1506" style="width:220px">
+      <button class="btn btn-sm" onclick="qbInspectJob()">🔎 Inspect job (raw QB)</button>
+      <span style="font-size:11px;color:#999">Pulls every invoice &amp; bill line for one job, live from QuickBooks.</span>
+    </div>
+    <div id="qb-inspect-panel" class="card" style="display:none;margin-bottom:1.25rem"></div>
+    <div id="qbdata-body"></div>
+  </div>
   <div id="forecast" class="section">
     <div style="display:flex;flex-wrap:wrap;align-items:flex-end;gap:16px;margin-bottom:1.25rem;background:#fff;border:1px solid #e8e8e8;border-radius:10px;padding:1rem 1.25rem;">
       <div>
@@ -1435,25 +1443,20 @@ async function qbInspectJob(eNum) {
 // QB Data tab — read-only view of everything the last sync pulled from QuickBooks,
 // so it can be eyeballed and verified before any newly-captured data feeds the forecast.
 function renderQBData() {
-  const el = document.getElementById('qbdata');
+  // Render into the body div only — the inspector input/panel are static markup so a
+  // background re-render (realtime "synced") can't wipe what's being typed.
+  const el = document.getElementById('qbdata-body');
   if (!el) return;
   if (!qbDiagnostics) {
     try { const s = localStorage.getItem('rf_qbDiag'); if (s) qbDiagnostics = JSON.parse(s); } catch (e) {}
   }
-  const inspector = `<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:1rem">
-      <input id="qb-inspect-input" placeholder="Inspect a job, e.g. E1506" style="width:220px">
-      <button class="btn btn-sm" onclick="qbInspectJob()">🔎 Inspect job (raw QB)</button>
-      <span style="font-size:11px;color:#999">Pulls every invoice &amp; bill line for one job, live from QuickBooks.</span>
-    </div>
-    <div id="qb-inspect-panel" class="card" style="display:none;margin-bottom:1.25rem"></div>`;
-
   const d = qbDiagnostics;
-  if (!d) { el.innerHTML = inspector + '<div class="empty-state">No sync data yet — inspect a job above, or click "⟳ Sync from QB" to pull everything.</div>'; return; }
+  if (!d) { el.innerHTML = '<div class="empty-state">No sync data yet — inspect a job above, or click "⟳ Sync from QB" to pull everything.</div>'; return; }
 
   const money = (n) => '£' + Math.round(n || 0).toLocaleString('en-GB');
   const mSort = (obj) => Object.keys(obj || {}).sort();
 
-  let html = inspector;
+  let html = '';
   const c = d.counts || {};
   const syncedStr = d.syncedAt ? new Date(d.syncedAt).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : '';
   html += `<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:.75rem">
