@@ -215,7 +215,7 @@
     </form>
     <div class="login-error" id="login-error"></div>
     <div class="login-hint">Shared login for Stuart &amp; accountant</div>
-    <div style="margin-top:1.5rem;font-size:10px;color:#bbb;font-family:monospace">v2.92-Aug-09</div>
+    <div style="margin-top:1.5rem;font-size:10px;color:#bbb;font-family:monospace">v2.93-Aug-09</div>
   </div>
 </div>
 
@@ -256,7 +256,7 @@
         <span id="conn-dot-circle" style="width:8px;height:8px;border-radius:50%;background:#d1d5db;display:inline-block;flex-shrink:0"></span>
         <span id="conn-dot-label">Connecting</span>
       </span>
-      <div class="app-ver" title="Build version">v2.92-Aug-09</div>
+      <div class="app-ver" title="Build version">v2.93-Aug-09</div>
       <button class="btn app-signout" onclick="handleLogout()" title="Sign out">Sign out</button>
     </div>
   </aside>
@@ -1002,8 +1002,27 @@ function infoTip(text) { return `<span class="infotip">i<span class="infotip-bub
 
 // Derived job status. 'complete' and 'paused' are explicit (set from the actuals tab);
 // otherwise a job is 'future' until its start month arrives, then 'active'.
+// Gross work certified to date = net billing + retention held + CIS suffered (all from QB).
+// Retention and CIS are cash-timing deductions, NOT unbilled work — so they count as billed.
+function grossBilledToDate(job) {
+  const a = job.actuals || {};
+  return Object.values(a).reduce((s, m) => s + (m ? (m.billing || 0) + (m.retention || 0) + (m.cis_deducted || 0) : 0), 0);
+}
+// A job is complete when the user marked it complete, OR its programme has ended AND the gross
+// work certified has reached the gross contract (>=98%). Auto-completion stops a finished job
+// forecasting its retention/CIS residual as future billing and drops it from the active set; its
+// retention release still flows (the forecast iterates all jobs). Manual "Complete" always wins.
+function isJobComplete(job) {
+  if (job.status === 'complete') return true;
+  if (job.paused) return false;
+  const contract = job.contract || 0;
+  if (contract <= 0 || !job.start || !job.dur) return false;
+  const months = getMonths(job.start, job.dur);
+  if (months[months.length - 1] >= getCurrentMonth()) return false; // programme not finished yet
+  return grossBilledToDate(job) >= contract * 0.98;
+}
 function jobStatus(j) {
-  if (j.status === 'complete') return 'complete';
+  if (isJobComplete(j)) return 'complete';
   if (j.paused) return 'paused';
   return j.start > getCurrentMonth() ? 'future' : 'active';
 }
@@ -1101,7 +1120,7 @@ function buildSchedule(job, field) {
   } else {
     reforecastPM = remainingMonths.length > 0 ? remaining / remainingMonths.length : 0;
   }
-  const isComplete = job.status === 'complete';
+  const isComplete = isJobComplete(job);
   const hasActuals = actMonths.size > 0 || hasPreStartDeposit;
   const result = {};
   effective.forEach(m => {
@@ -1147,7 +1166,7 @@ function getSummary(job, field) {
 // Calculates balance directly (not via getSummary) to avoid circular dependency
 function getEffectiveMonths(job) {
   const scheduled = getMonths(job.start, job.dur);
-  if (job.status === 'complete' || job.paused) return scheduled;
+  if (isJobComplete(job) || job.paused) return scheduled;
   const cur = getCurrentMonth();
   const lastMonth = scheduled[scheduled.length - 1];
   if (lastMonth >= cur) return scheduled;
@@ -1895,7 +1914,7 @@ function renderJobsTable() {
   jobs.forEach((j, i) => {
     // For complete jobs, use actuals where available
     let labour, materials, overhead, contract;
-    if (j.status === 'complete') {
+    if (isJobComplete(j)) {
       const months = getEffectiveMonths(j);
       let actL=0, actM=0, actO=0, actB=0, hasActuals=false;
       months.forEach(m => {
@@ -1919,7 +1938,7 @@ function renderJobsTable() {
     const tc     = labour + materials + overhead;
     const profit = contract - tc;
     const margin = contract > 0 ? profit / contract * 100 : 0;
-    const isComplete = j.status === 'complete';
+    const isComplete = isJobComplete(j);
 
     totContract  += contract;
     totLabour    += labour;
@@ -2662,11 +2681,11 @@ function renderActualsSection() {
 
   // Filter to active/future jobs for the pills — completed jobs hidden by default
   const showComplete = window._actualsShowComplete || false;
-  const visibleJobs = jobs.filter((jj, i) => jj.status !== 'complete' || i === activeActualsJob || showComplete);
+  const visibleJobs = jobs.filter((jj, i) => !isJobComplete(jj) || i === activeActualsJob || showComplete);
 
   // If activeActualsJob points to a complete job and we're not showing complete, reset to first visible
-  if (!showComplete && jobs[activeActualsJob]?.status === 'complete') {
-    const firstActive = jobs.findIndex(jj => jj.status !== 'complete');
+  if (!showComplete && jobs[activeActualsJob] && isJobComplete(jobs[activeActualsJob])) {
+    const firstActive = jobs.findIndex(jj => !isJobComplete(jj));
     if (firstActive >= 0) { activeActualsJob = firstActive; }
   }
 
@@ -2682,13 +2701,13 @@ function renderActualsSection() {
   const allActualsMonths = [...preStartDepositMonths, ...months];
 
   // Pills — show active/future only (+ toggle for complete)
-  const completeCount = jobs.filter(jj => jj.status === 'complete').length;
+  const completeCount = jobs.filter(jj => isJobComplete(jj)).length;
   let pills = '<div class="pill-row">' + jobs.map((jj, i) => {
-    if (jj.status === 'complete' && !showComplete && i !== activeActualsJob) return '';
+    if (isJobComplete(jj) && !showComplete && i !== activeActualsJob) return '';
     const label = jj.projectName
       ? jj.name + ' <span style="opacity:.6;font-size:11px">&middot; ' + jj.projectName + '</span>'
       : jj.client ? jj.name + ' <span style="opacity:.6;font-size:11px">&middot; ' + jj.client + '</span>' : jj.name;
-    const isComplete = jj.status === 'complete';
+    const isComplete = isJobComplete(jj);
     const completeBadge = isComplete ? ' <span style="font-size:10px;opacity:.8">✓</span>' : '';
     const activeStyle = i === activeActualsJob
       ? (isComplete ? 'background:#15803d;color:#fff;border-color:#15803d;' : 'background:#1a1a1a;color:#fff;border-color:#1a1a1a;')
@@ -2707,10 +2726,10 @@ function renderActualsSection() {
     + '</div>'
     + '<div style="display:flex;gap:8px;flex-wrap:wrap">'
     + '<button class="btn btn-sm" onclick="editJob(' + activeActualsJob + ')">Edit job details</button>'
-    + (j.status !== 'complete' ? '<button class="btn btn-sm" style="background:#f0fdf4;border-color:#86efac;color:#15803d" onclick="markJobComplete(' + activeActualsJob + ')">✓ Mark complete</button>' : '')
-    + (j.status !== 'complete' && !j.paused ? '<button class="btn btn-sm" style="background:#fff7ed;border-color:#fdba74;color:#c2410c" onclick="togglePause(' + activeActualsJob + ')">⏸ Pause forecast</button>' : '')
+    + (!isJobComplete(j) ? '<button class="btn btn-sm" style="background:#f0fdf4;border-color:#86efac;color:#15803d" onclick="markJobComplete(' + activeActualsJob + ')">✓ Mark complete</button>' : '')
+    + (!isJobComplete(j) && !j.paused ? '<button class="btn btn-sm" style="background:#fff7ed;border-color:#fdba74;color:#c2410c" onclick="togglePause(' + activeActualsJob + ')">⏸ Pause forecast</button>' : '')
     + (j.paused ? '<span style="background:#fff7ed;border:1px solid #fdba74;color:#c2410c;padding:4px 10px;border-radius:6px;font-size:12px;font-weight:500">⏸ Paused</span> <button class="btn btn-sm" onclick="togglePause(' + activeActualsJob + ')">▶ Resume forecast</button>' : '')
-    + (j.status === 'complete' ? '<span style="background:#f0fdf4;border:1px solid #86efac;color:#15803d;padding:4px 10px;border-radius:6px;font-size:12px;font-weight:500">✓ Complete</span> <button class="btn btn-sm" style="background:#fef9c3;border-color:#fde68a;color:#a16207" onclick="undoJobComplete(' + activeActualsJob + ')">Undo complete</button>' : '')
+    + (isJobComplete(j) ? '<span style="background:#f0fdf4;border:1px solid #86efac;color:#15803d;padding:4px 10px;border-radius:6px;font-size:12px;font-weight:500">✓ Complete</span> ' + (j.status === 'complete' ? '<button class="btn btn-sm" style="background:#fef9c3;border-color:#fde68a;color:#a16207" onclick="undoJobComplete(' + activeActualsJob + ')">Undo complete</button>' : '<span style="font-size:11px;color:#6b7280">auto — fully billed &amp; ended</span>') : '')
     + '<button class="btn btn-sm" onclick="downloadJobPDF(' + activeActualsJob + ')" style="background:#f8f8f8">⬇ PDF</button>'
     + '</div></div>';
 
@@ -2727,7 +2746,7 @@ function renderActualsSection() {
       + 'Extend the duration in job details to keep this in the forecast, or raise a final invoice and mark complete.'
       + '</div>';
   }
-  if (bilSum.balance < bilSum.originalTotal * 0.02 && remCosts > 50 && j.status !== 'complete') {
+  if (bilSum.balance < bilSum.originalTotal * 0.02 && remCosts > 50 && !isJobComplete(j)) {
     banners += '<div style="background:#fefce8;border:1px solid #fde68a;border-radius:8px;padding:10px 14px;margin-bottom:1rem;font-size:12px;color:#a16207">'
       + '<strong>⚠ Billing appears complete</strong> but ' + fmt(remCosts) + ' costs are still forecast. '
       + 'If the job is finished, click <strong>Mark complete</strong> above to remove these from the forecast.'
@@ -4244,7 +4263,7 @@ function editJob(idx) {
 
   // Check if any field has remaining balance
   const fields = ['billing', 'labour', 'materials', 'overhead'];
-  const hasBalance = j.status !== 'complete' && fields.some(field => {
+  const hasBalance = !isJobComplete(j) && fields.some(field => {
     const total = field === 'billing' ? netBillingTotal(j) : j[field];
     let spent = 0;
     scheduled.forEach(m => {
