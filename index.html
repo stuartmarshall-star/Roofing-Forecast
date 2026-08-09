@@ -215,7 +215,7 @@
     </form>
     <div class="login-error" id="login-error"></div>
     <div class="login-hint">Shared login for Stuart &amp; accountant</div>
-    <div style="margin-top:1.5rem;font-size:10px;color:#bbb;font-family:monospace">v2.93-Aug-09</div>
+    <div style="margin-top:1.5rem;font-size:10px;color:#bbb;font-family:monospace">v2.94-Aug-09</div>
   </div>
 </div>
 
@@ -256,7 +256,7 @@
         <span id="conn-dot-circle" style="width:8px;height:8px;border-radius:50%;background:#d1d5db;display:inline-block;flex-shrink:0"></span>
         <span id="conn-dot-label">Connecting</span>
       </span>
-      <div class="app-ver" title="Build version">v2.93-Aug-09</div>
+      <div class="app-ver" title="Build version">v2.94-Aug-09</div>
       <button class="btn app-signout" onclick="handleLogout()" title="Sign out">Sign out</button>
     </div>
   </aside>
@@ -1007,6 +1007,16 @@ function infoTip(text) { return `<span class="infotip">i<span class="infotip-bub
 function grossBilledToDate(job) {
   const a = job.actuals || {};
   return Object.values(a).reduce((s, m) => s + (m ? (m.billing || 0) + (m.retention || 0) + (m.cis_deducted || 0) : 0), 0);
+}
+// Gross billing progress for display: work certified (gross) vs the gross contract. Retention and
+// CIS are held-back cash, not unbilled work, so they count as certified here — a finished job reads
+// ~100% even though net received is lower.
+function grossBillingProgress(job) {
+  const grossContract = job.contract || 0;
+  const grossBilled = grossBilledToDate(job);
+  const remaining = Math.max(0, grossContract - grossBilled);
+  const pct = grossContract > 0 ? grossBilled / grossContract * 100 : 0;
+  return { grossContract, grossBilled, remaining, pct };
 }
 // A job is complete when the user marked it complete, OR its programme has ended AND the gross
 // work certified has reached the gross contract (>=98%). Auto-completion stops a finished job
@@ -2740,10 +2750,11 @@ function renderActualsSection() {
   const labSum = getSummary(j, 'labour'), matSum = getSummary(j, 'materials'), ovhSum = getSummary(j, 'overhead');
   const remCosts = labSum.balance + matSum.balance + ovhSum.balance;
   let banners = '';
-  if (lastMonth_j < cur && bilSum.balance > 0) {
+  const grossUnbilled_j = (j.contract || 0) - grossBilledToDate(j);
+  if (lastMonth_j < cur && !isJobComplete(j) && grossUnbilled_j > Math.max(500, (j.contract || 0) * 0.02)) {
     banners += '<div style="background:#fef2f2;border:1px solid #fca5a5;border-radius:8px;padding:10px 14px;margin-bottom:1rem;font-size:12px;color:#dc2626">'
-      + '<strong>⚠ Billing overrun:</strong> Job ended ' + monthLabel(lastMonth_j) + ' but ' + fmt(bilSum.balance) + ' is still to bill. '
-      + 'Extend the duration in job details to keep this in the forecast, or raise a final invoice and mark complete.'
+      + '<strong>⚠ Work still unbilled:</strong> Job ended ' + monthLabel(lastMonth_j) + ' but ' + fmt(grossUnbilled_j) + ' of work has not been certified. '
+      + 'Raise a final application, or extend the duration to keep it in the forecast. (Retention and CIS held back do not count here.)'
       + '</div>';
   }
   if (bilSum.balance < bilSum.originalTotal * 0.02 && remCosts > 50 && !isJobComplete(j)) {
@@ -2812,16 +2823,17 @@ function renderActualsSection() {
       + (totalCisDeducted > 0 ? ' &nbsp;|&nbsp; CIS deducted to date: ' + fmt(totalCisDeducted) : '')
     : '';
 
-  const bpct = bs.originalTotal > 0 ? Math.round(bs.actualSpent / bs.originalTotal * 100) : 0;
-  const bBarCol = bpct >= 100 ? '#16a34a' : bpct >= 85 ? '#d97706' : '#1d4ed8';
+  const gp = grossBillingProgress(j);
+  const bpct = Math.round(gp.pct);
+  const bBarCol = bpct >= 98 ? '#16a34a' : bpct >= 85 ? '#d97706' : '#1d4ed8';
   bal += '<div class="balance-strip">'
     + '<div class="balance-box" style="grid-column:span 2">'
-    + '<div class="balance-box-label">Billing received (excl. retention) \u2014 contract ' + fmt(j.contract) + ', retention ' + j.retention + '%' + (j.cis ? ', CIS' : '') + '</div>'
-    + '<div class="balance-box-val">' + fmt(bs.originalTotal) + '</div>'
+    + '<div class="balance-box-label">Work certified vs contract \u2014 contract ' + fmt(j.contract) + ', retention ' + j.retention + '%' + (j.cis ? ', CIS' : '') + '</div>'
+    + '<div class="balance-box-val">' + fmt(gp.grossBilled) + ' <span style="font-size:12px;color:#888;font-weight:400">of ' + fmt(gp.grossContract) + '</span></div>'
     + '<div style="font-size:11px;color:#888;margin-top:2px">'
-    + '<span style="color:#16a34a">Received: ' + fmt(bs.actualSpent) + '</span>'
-    + ' &nbsp;|&nbsp; Still to bill: ' + fmt(bs.balance)
-    + ' &nbsp;|&nbsp; Retention held: ' + fmt(j.contract * j.retention / 100)
+    + '<span style="color:#16a34a">Net received: ' + fmt(bs.actualSpent) + '</span>'
+    + ' &nbsp;|&nbsp; Unbilled work: ' + fmt(gp.remaining)
+    + ' &nbsp;|&nbsp; Retention held: ' + fmt(getRetentionTotal(j))
     + cisNote
     + ' &nbsp;|&nbsp; <strong style="color:' + bBarCol + '">' + bpct + '%</strong>'
     + '</div>'
