@@ -157,7 +157,7 @@
     </form>
     <div class="login-error" id="login-error"></div>
     <div class="login-hint">Shared login for Stuart &amp; accountant</div>
-    <div style="margin-top:1.5rem;font-size:10px;color:#bbb;font-family:monospace">v2.89-Jun-05</div>
+    <div style="margin-top:1.5rem;font-size:10px;color:#bbb;font-family:monospace">v2.90-Aug-09</div>
   </div>
 </div>
 
@@ -178,7 +178,7 @@
     </div>
     <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
       <span class="saving" id="saving-indicator"></span>
-      <span style="font-size:10px;color:#bbb;font-family:monospace;user-select:none" title="Build version">v2.89-Jun-05</span>
+      <span style="font-size:10px;color:#bbb;font-family:monospace;user-select:none" title="Build version">v2.90-Aug-09</span>
       <button id="btn-job-template" class="btn tab-btn-jobs" style="display:none" onclick="downloadCsvTemplate()">⬇ Job template</button>
       <button id="btn-import-jobs" class="btn tab-btn-jobs" style="display:none" onclick="document.getElementById('csv-file-input').click()">⬆ Import jobs</button>
       <button id="btn-actuals-template" class="btn tab-btn-actuals" style="display:none" onclick="downloadActualsTemplate()">⬇ Actuals template</button>
@@ -1444,8 +1444,30 @@ async function qbInspectJob(eNum) {
       </div>
       <div style="font-size:12px;color:#555;margin-bottom:10px">Customers: ${(d.customers || []).map(c => c.name).join(' · ') || '—'}<br>
         Invoices: <strong>${rs.invoiceCount}</strong> · Credit memos: <strong>${rs.creditMemoCount}</strong> · Net billing ex-VAT: <strong>${money(rs.netBillingExVat)}</strong> · Retention held: <strong>${money(rs.retentionHeld)}</strong></div>`;
-    h += `<div style="font-size:12px;font-weight:600;color:#555;margin:.5rem 0 .25rem">Invoices</div><div style="overflow-x:auto"><table style="font-size:12px"><thead><tr><th>Doc</th><th>Date</th><th>Due</th><th style="text-align:right">Total</th><th style="text-align:right">VAT</th><th style="text-align:right">Retention line</th><th style="text-align:right">CIS line</th><th style="text-align:right">Net ex-VAT</th></tr></thead><tbody>`;
-    (d.invoices || []).forEach(i => { h += `<tr><td>${i.doc || '—'}</td><td style="white-space:nowrap">${i.txnDate}</td><td style="white-space:nowrap">${i.dueDate || '—'}</td><td style="text-align:right">${money(i.total)}</td><td style="text-align:right">${i.vat ? money(i.vat) : '—'}</td><td style="text-align:right;color:${i.retention < 0 ? '#dc2626' : (i.retention > 0 ? '#16a34a' : '#999')}">${i.retention ? money(i.retention) : '—'}</td><td style="text-align:right">${i.cis ? money(i.cis) : '—'}</td><td style="text-align:right">${money(i.total - i.vat)}</td></tr>`; });
+    // Coded split — income by item SKU prefix (R/S/A = contract, V = variation), cost by per-line Class.
+    // Read-only preview so the classification can be verified before it feeds the forecast.
+    const cs = d.codedSummary || {};
+    const ci = cs.income || {}, cc = cs.cost || {};
+    const ccC = cc.contract || {}, ccV = cc.variation || {};
+    const sumLMO = (o) => (o.labour || 0) + (o.materials || 0) + (o.overhead || 0);
+    h += `<div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:10px;padding:.75rem 1rem;margin-bottom:12px">
+        <div style="font-size:12px;font-weight:600;color:#1d4ed8;margin-bottom:6px">Coded split — income by item SKU · cost by Class <span style="font-weight:400;color:#64748b">(read-only preview — not yet in the forecast)</span></div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;font-size:12px">
+          <div>
+            <div style="color:#555;font-weight:600;margin-bottom:3px">Income</div>
+            <div>Contract: <strong>${money(ci.contract)}</strong> <span style="color:#888">(Roofing ${money(ci.roofing)} · Solar ${money(ci.solar)} · Access ${money(ci.access)})</span></div>
+            <div>Variation: <strong style="color:#b45309">${money(ci.variation)}</strong></div>
+          </div>
+          <div>
+            <div style="color:#555;font-weight:600;margin-bottom:3px">Cost <span style="font-weight:400;color:#888">(Labour / Materials / Overhead)</span></div>
+            <div>Contract: <strong>${money(sumLMO(ccC))}</strong> <span style="color:#888">(${money(ccC.labour)} / ${money(ccC.materials)} / ${money(ccC.overhead)})</span></div>
+            <div>Variation: <strong style="color:#b45309">${money(sumLMO(ccV))}</strong> <span style="color:#888">(${money(ccV.labour)} / ${money(ccV.materials)} / ${money(ccV.overhead)})</span></div>
+          </div>
+        </div>
+        <div style="font-size:11px;color:#94a3b8;margin-top:6px">${cs.itemsLoaded ? cs.itemsLoaded + ' items loaded for SKU lookup' : 'Item list not loaded — classified by item-name fallback'}. Variation cost is a separate cash layer; it stays out of % build / duration.</div>
+      </div>`;
+    h += `<div style="font-size:12px;font-weight:600;color:#555;margin:.5rem 0 .25rem">Invoices</div><div style="overflow-x:auto"><table style="font-size:12px"><thead><tr><th>Doc</th><th>Date</th><th>Due</th><th style="text-align:right">Total</th><th style="text-align:right">VAT</th><th style="text-align:right">Contract</th><th style="text-align:right">Variation</th><th style="text-align:right">Retention line</th><th style="text-align:right">CIS line</th><th style="text-align:right">Net ex-VAT</th></tr></thead><tbody>`;
+    (d.invoices || []).forEach(i => { h += `<tr><td>${i.doc || '—'}</td><td style="white-space:nowrap">${i.txnDate}</td><td style="white-space:nowrap">${i.dueDate || '—'}</td><td style="text-align:right">${money(i.total)}</td><td style="text-align:right">${i.vat ? money(i.vat) : '—'}</td><td style="text-align:right">${i.contract ? money(i.contract) : '—'}</td><td style="text-align:right;color:${i.variation ? '#b45309' : '#999'}">${i.variation ? money(i.variation) : '—'}</td><td style="text-align:right;color:${i.retention < 0 ? '#dc2626' : (i.retention > 0 ? '#16a34a' : '#999')}">${i.retention ? money(i.retention) : '—'}</td><td style="text-align:right">${i.cis ? money(i.cis) : '—'}</td><td style="text-align:right">${money(i.total - i.vat)}</td></tr>`; });
     h += `</tbody></table></div>`;
     if ((d.creditMemos || []).length) {
       h += `<div style="font-size:12px;font-weight:600;color:#555;margin:.75rem 0 .25rem">Credit memos</div><div style="overflow-x:auto"><table style="font-size:12px"><thead><tr><th>Doc</th><th>Date</th><th style="text-align:right">Total</th><th style="text-align:right">VAT</th><th style="text-align:right">Retention line</th></tr></thead><tbody>`;
