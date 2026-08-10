@@ -215,7 +215,7 @@
     </form>
     <div class="login-error" id="login-error"></div>
     <div class="login-hint">Shared login for Stuart &amp; accountant</div>
-    <div style="margin-top:1.5rem;font-size:10px;color:#bbb;font-family:monospace">v2.96-Aug-10</div>
+    <div style="margin-top:1.5rem;font-size:10px;color:#bbb;font-family:monospace">v2.97-Aug-10</div>
   </div>
 </div>
 
@@ -256,7 +256,7 @@
         <span id="conn-dot-circle" style="width:8px;height:8px;border-radius:50%;background:#d1d5db;display:inline-block;flex-shrink:0"></span>
         <span id="conn-dot-label">Connecting</span>
       </span>
-      <div class="app-ver" title="Build version">v2.96-Aug-10</div>
+      <div class="app-ver" title="Build version">v2.97-Aug-10</div>
       <button class="btn app-signout" onclick="handleLogout()" title="Sign out">Sign out</button>
     </div>
   </aside>
@@ -3328,38 +3328,41 @@ function renderForecastSection() {
   const chartH = allMonths.length > 18 ? 320 : 280;
 
   // ── Range metrics ────────────────────────────────────────────────────────────
-  let rmTotalBilling=0, rmTotalCost=0, rmTotalLiab=0, rmTotalRet=0, rmTotalCredits=0;
-  let rmActBilling=0, rmActCost=0, rmActMonths=0;
+  let rmTotalBilling=0, rmTotalGrossBilling=0, rmTotalCost=0, rmTotalLiab=0, rmTotalRet=0, rmTotalCredits=0;
+  let rmActGrossBilling=0, rmActCost=0, rmActMonths=0;
   rows.forEach(r => {
-    rmTotalBilling  += r.tNetBilling;
-    rmTotalCost     += r.tCTotal;
-    rmTotalLiab     += r.tLiab;
-    rmTotalRet      += r.tRetFinal;
-    rmTotalCredits  += r.tCreditsReceived + r.tDepositExpected;
+    rmTotalBilling      += r.tNetBilling;
+    rmTotalGrossBilling += r.tGrossBilling;   // gross of retention — the work certified
+    rmTotalCost         += r.tCTotal;
+    rmTotalLiab         += r.tLiab;
+    rmTotalRet          += r.tRetFinal;
+    rmTotalCredits      += r.tCreditsReceived + r.tDepositExpected;
     // Actuals = past months only
     if (r.m < cur) {
       jobs.forEach(j => {
         const a = j.actuals[r.m];
         if (a) {
-          rmActCost    += (a.labour||0) + (a.materials||0) + (a.overhead||0);
-          rmActBilling += (a.billing||0);
+          rmActCost         += (a.labour||0) + (a.materials||0) + (a.overhead||0);
+          rmActGrossBilling += (a.billing||0) + (a.retention||0);   // add retention back = work certified
         }
       });
       rmActMonths++;
     }
   });
-  const rmGrossProfit  = rmTotalBilling - rmTotalCost;
-  const rmGrossMargin  = rmTotalBilling > 0 ? rmGrossProfit / rmTotalBilling * 100 : 0;
+  // Gross profit/margin measured on GROSS billing (work certified, before retention) so it's consistent
+  // between forecast and actuals — retention is held cash, not a revenue reduction.
+  const rmGrossProfit  = rmTotalGrossBilling - rmTotalCost;
+  const rmGrossMargin  = rmTotalGrossBilling > 0 ? rmGrossProfit / rmTotalGrossBilling * 100 : 0;
   const rmNetProfit    = rmTotalBilling + rmTotalRet + rmTotalCredits - rmTotalCost - rmTotalLiab;
   const rmNetMargin    = rmTotalBilling > 0 ? rmNetProfit / rmTotalBilling * 100 : 0;
-  const rmActProfit    = rmActMonths > 0 ? rmActBilling - rmActCost : null;
-  const rmActMargin    = rmActBilling > 0 ? (rmActBilling - rmActCost) / rmActBilling * 100 : null;
+  const rmActProfit    = rmActMonths > 0 ? rmActGrossBilling - rmActCost : null;
+  const rmActMargin    = rmActGrossBilling > 0 ? (rmActGrossBilling - rmActCost) / rmActGrossBilling * 100 : null;
 
   const metricsHtml = '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;margin-bottom:1.25rem">'
     + '<div class="metric"><div class="metric-label">Net billing in range</div><div class="metric-value">' + fmt(rmTotalBilling) + '</div><div style="font-size:11px;color:#888;margin-top:2px">After retention deducted</div></div>'
     + '<div class="metric"><div class="metric-label">Total job costs in range</div><div class="metric-value">' + fmt(rmTotalCost) + '</div><div style="font-size:11px;color:#888;margin-top:2px">Labour + materials + overhead + unallocated</div></div>'
     + '<div class="metric"><div class="metric-label">Total liabilities in range</div><div class="metric-value ' + (rmTotalLiab > 0 ? 'red' : '') + '">' + fmt(rmTotalLiab) + '</div><div style="font-size:11px;color:#888;margin-top:2px">Fixed overheads &amp; debt service</div></div>'
-    + '<div class="metric"><div class="metric-label">Forecast gross profit</div><div class="metric-value ' + (rmGrossProfit >= 0 ? 'green' : 'red') + '">' + fmt(rmGrossProfit) + '</div><div style="font-size:11px;color:#888;margin-top:2px">' + fmtPct(rmGrossMargin) + ' of net billing</div></div>'
+    + '<div class="metric"><div class="metric-label">Forecast gross profit</div><div class="metric-value ' + (rmGrossProfit >= 0 ? 'green' : 'red') + '">' + fmt(rmGrossProfit) + '</div><div style="font-size:11px;color:#888;margin-top:2px">' + fmtPct(rmGrossMargin) + ' of work certified</div></div>'
     + '<div class="metric"><div class="metric-label">Forecast net profit</div><div class="metric-value ' + (rmNetProfit >= 0 ? 'green' : 'red') + '">' + fmt(rmNetProfit) + '</div><div style="font-size:11px;color:#888;margin-top:2px">' + fmtPct(rmNetMargin) + ' — incl. liabilities &amp; credits</div></div>'
     + (rmActProfit !== null ? '<div class="metric"><div class="metric-label">Actual profit to date</div><div class="metric-value ' + (rmActProfit >= 0 ? 'green' : 'red') + '">' + fmt(rmActProfit) + '</div><div style="font-size:11px;color:#888;margin-top:2px">' + (rmActMargin !== null ? fmtPct(rmActMargin) + ' margin on actuals' : '') + '</div></div>' : '')
     + '</div>';
