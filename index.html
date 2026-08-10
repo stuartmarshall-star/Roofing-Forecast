@@ -115,24 +115,27 @@
   .kan-card-detail { font-size: 12px; color: #444; margin-top: 6px; line-height: 1.4; }
   .kan-card-actions { margin-top: 8px; }
   .kan-empty { color: #9ca3af; font-size: 12px; padding: 10px 4px; text-align: center; }
-  /* Actions Centre — secondary page menu + one category at a time */
-  .ac-layout { display: flex; gap: 20px; align-items: flex-start; }
-  .ac-menu { flex: 0 0 208px; display: flex; flex-direction: column; gap: 3px; position: sticky; top: 16px; }
-  .ac-menu-item { display: flex; align-items: center; gap: 9px; width: 100%; text-align: left; padding: 9px 11px; border: 1px solid transparent; border-radius: 8px; background: transparent; cursor: pointer; font-family: inherit; font-size: 13px; color: #4b5563; line-height: 1.2; }
-  .ac-menu-item:hover { background: #f3f4f6; color: #1a1a1a; }
-  .ac-menu-item.active { background: #fff; border-color: #e5e7eb; box-shadow: 0 1px 2px rgba(0,0,0,.05); font-weight: 600; color: #111; }
+  /* Actions Centre — secondary page menu (mirrors the main dark sidebar) + one category at a time */
+  .ac-layout { display: flex; gap: 22px; align-items: flex-start; }
+  .ac-menu { flex: 0 0 212px; display: flex; flex-direction: column; gap: 2px; position: sticky; top: 16px;
+             background: var(--qb-side); border: 1px solid var(--qb-side-line); border-radius: 12px; padding: 10px 9px; }
+  .ac-menu-item { display: flex; align-items: center; gap: 9px; width: 100%; text-align: left; padding: 9px 11px; border: none; border-radius: 8px; background: transparent; cursor: pointer; font-family: inherit; font-size: 13px; color: var(--qb-side-text); line-height: 1.25; position: relative; }
+  .ac-menu-item:hover { background: rgba(255,255,255,.06); color: #fff; }
+  .ac-menu-item.active { background: rgba(44,160,28,.16); color: #fff; font-weight: 600; }
+  .ac-menu-item.active::before { content: ""; position: absolute; left: -9px; top: 7px; bottom: 7px; width: 3px; background: var(--qb-accent); border-radius: 0 3px 3px 0; }
   .ac-menu-item .ac-ico { width: 16px; text-align: center; flex: 0 0 auto; }
   .ac-menu-item .ac-lbl { flex: 1 1 auto; }
-  .ac-menu-count { background: #eceef1; color: #9ca3af; border-radius: 10px; padding: 1px 8px; font-size: 11px; font-weight: 600; min-width: 22px; text-align: center; flex: 0 0 auto; }
-  .ac-menu-count.has { background: #374151; color: #fff; }
+  .ac-menu-count { background: rgba(255,255,255,.12); color: var(--qb-side-text); border-radius: 10px; padding: 1px 8px; font-size: 11px; font-weight: 600; min-width: 22px; text-align: center; flex: 0 0 auto; }
+  .ac-menu-count.has { background: var(--qb-accent); color: #fff; }
   .ac-content { flex: 1 1 auto; min-width: 0; }
   .ac-content-head { font-size: 14px; font-weight: 600; color: #1a1a1a; margin-bottom: 4px; display: flex; align-items: center; gap: 8px; }
   .ac-content-sub { font-size: 12px; color: #9ca3af; margin-bottom: 14px; }
-  .ac-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 10px; align-items: start; }
+  .ac-cards { display: flex; flex-direction: column; gap: 10px; max-width: 640px; }
   @media (max-width: 760px) {
     .ac-layout { flex-direction: column; }
     .ac-menu { flex: none; width: 100%; flex-direction: row; flex-wrap: wrap; position: static; }
     .ac-menu-item { width: auto; }
+    .ac-menu-item.active::before { display: none; }
   }
   @media (max-width: 640px) {
     .metric-row { grid-template-columns: repeat(2, 1fr); }
@@ -234,7 +237,7 @@
     </form>
     <div class="login-error" id="login-error"></div>
     <div class="login-hint">Shared login for Stuart &amp; accountant</div>
-    <div style="margin-top:1.5rem;font-size:10px;color:#bbb;font-family:monospace">v3.03-Aug-10</div>
+    <div style="margin-top:1.5rem;font-size:10px;color:#bbb;font-family:monospace">v3.04-Aug-10</div>
   </div>
 </div>
 
@@ -276,7 +279,7 @@
         <span id="conn-dot-circle" style="width:8px;height:8px;border-radius:50%;background:#d1d5db;display:inline-block;flex-shrink:0"></span>
         <span id="conn-dot-label">Connecting</span>
       </span>
-      <div class="app-ver" title="Build version">v3.03-Aug-10</div>
+      <div class="app-ver" title="Build version">v3.04-Aug-10</div>
       <button class="btn app-signout" onclick="handleLogout()" title="Sign out">Sign out</button>
     </div>
   </aside>
@@ -1926,7 +1929,7 @@ function renderSummary() {
     </div>`;
   });
 
-  const upcomingCards = upcoming.map(u => {
+  const upcomingCard = u => {
     const isEnd = u.type === 'ending';
     const ev = isEnd ? `Completing ${monthLabel(u.month)}` : `Starting ${monthLabel(u.month)}`;
     const ret = isEnd ? ` · ${fmt(getRetentionTotal(u.j) / 2)} retention due` : '';
@@ -1936,7 +1939,9 @@ function renderSummary() {
       <div class="kan-card-detail">${ev}${ret}</div>
       <div class="kan-card-actions">${viewBtn(u.j)}</div>
     </div>`;
-  });
+  };
+  const startingCards  = upcoming.filter(u => u.type === 'starting').map(upcomingCard);
+  const finishingCards = upcoming.filter(u => u.type === 'ending').map(upcomingCard);
 
   const columns = [
     { key: 'needs-billing',    title: 'Needs billing',          icon: '🟠', cards: riskCards(['needs-billing']) },
@@ -1944,7 +1949,8 @@ function renderSummary() {
     { key: 'costs-past-end',   title: 'Costs past end',         icon: '🟡', cards: riskCards(['costs-after-billing']) },
     { key: 'at-risk',          title: 'Cost / billing at risk', icon: '⚠️', cards: riskCards(['cost','cost-pace','billing','margin']) },
     { key: 'unallocated',      title: 'Unallocated costs',      icon: '🟠', cards: unallocCards },
-    { key: 'upcoming',         title: 'Upcoming · 3 mo',        icon: '🔵', cards: upcomingCards },
+    { key: 'starting',         title: 'Starting · 3 mo',        icon: '🔵', cards: startingCards },
+    { key: 'finishing',        title: 'Finishing · 3 mo',       icon: '🏁', cards: finishingCards },
   ];
 
   // One category shown at a time, chosen from the left page-menu. Default to the first
