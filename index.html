@@ -215,7 +215,7 @@
     </form>
     <div class="login-error" id="login-error"></div>
     <div class="login-hint">Shared login for Stuart &amp; accountant</div>
-    <div style="margin-top:1.5rem;font-size:10px;color:#bbb;font-family:monospace">v2.97-Aug-10</div>
+    <div style="margin-top:1.5rem;font-size:10px;color:#bbb;font-family:monospace">v2.98-Aug-10</div>
   </div>
 </div>
 
@@ -256,7 +256,7 @@
         <span id="conn-dot-circle" style="width:8px;height:8px;border-radius:50%;background:#d1d5db;display:inline-block;flex-shrink:0"></span>
         <span id="conn-dot-label">Connecting</span>
       </span>
-      <div class="app-ver" title="Build version">v2.97-Aug-10</div>
+      <div class="app-ver" title="Build version">v2.98-Aug-10</div>
       <button class="btn app-signout" onclick="handleLogout()" title="Sign out">Sign out</button>
     </div>
   </aside>
@@ -685,6 +685,7 @@ let liabilities = [];
 let credits = [];
 let unallocatedCosts = {}; // { [month]: { labour, materials } } — from QB bills with no E-number
 let vatInput = {}; // { [month]: input_vat } — company-level input VAT paid on purchases (from QB bill tax)
+let cisWithheld = {}; // { [month]: cis_withheld } — company-level CIS deducted from subbie labour (from QB), paid to HMRC ~22nd of following month
 let qbDiagnostics = null; // last QB sync's read-only diagnostics payload (for the QB Data page)
 let editCreditIdx = null;
 let editIdx = null;
@@ -813,12 +814,13 @@ function setSaving(msg) { document.getElementById('saving-indicator').textConten
 async function loadJobs() {
   setStatus('connecting', 'Connecting to your database...');
   try {
-    const [jobData, liabData, creditData, unallocData, vatData] = await Promise.all([
+    const [jobData, liabData, creditData, unallocData, vatData, cisData] = await Promise.all([
       sbFetch('jobs?select=*&order=created_at.asc'),
       sbFetch('liabilities?select=*&order=created_at.asc').catch(() => []),
       sbFetch('credits?select=*&order=created_at.asc').catch(() => []),
       sbFetch('unallocated_costs?select=*').catch(() => []),
-      sbFetch('vat_input_monthly?select=*').catch(() => [])
+      sbFetch('vat_input_monthly?select=*').catch(() => []),
+      sbFetch('cis_withheld_monthly?select=*').catch(() => [])
     ]);
     jobs = jobData.map(dbToJob);
     liabilities = liabData.map(dbToLiab);
@@ -831,6 +833,9 @@ async function loadJobs() {
     // Build input-VAT lookup by month
     vatInput = {};
     (vatData || []).forEach(r => { vatInput[r.month] = parseFloat(r.input_vat) || 0; });
+    // Build CIS-withheld lookup by month (CIS deducted from subbie labour, remitted to HMRC ~22nd of following month)
+    cisWithheld = {};
+    (cisData || []).forEach(r => { cisWithheld[r.month] = parseFloat(r.cis_withheld) || 0; });
 
     isConnected = true;
     setStatus('connected', 'Connected — all changes save automatically and sync live with your accountant');
@@ -2851,6 +2856,21 @@ function renderActualsSection() {
     + '</div>'
     + '</div>';
 
+  // Billing reconciliation — net received + retention held (+ CIS suffered) = gross work certified.
+  // Same "gross bottom line" as the forecast waterfall: retention is held back, not unbilled work.
+  let retHeldToDate = 0;
+  Object.values(j.actuals || {}).forEach((a) => { if (a && a.retention) retHeldToDate += a.retention; });
+  if (gp.grossBilled > 0 || retHeldToDate > 0) {
+    bal += '<div class="card" style="padding:.75rem 1rem;margin-bottom:1rem;font-size:12px">'
+      + '<div style="color:#888;margin-bottom:6px;font-weight:500">Billing reconciliation</div>'
+      + '<div style="display:flex;justify-content:space-between;padding:2px 0"><span>Net billing received (cash in)</span><strong>' + fmt(bs.actualSpent) + '</strong></div>'
+      + '<div style="display:flex;justify-content:space-between;padding:2px 0;color:#dc2626"><span>+ Retention held (released later)</span><span>' + (retHeldToDate > 0 ? fmt(retHeldToDate) : '—') + '</span></div>'
+      + (totalCisDeducted > 0 ? '<div style="display:flex;justify-content:space-between;padding:2px 0;color:#dc2626"><span>+ CIS suffered (deducted by client)</span><span>' + fmt(totalCisDeducted) + '</span></div>' : '')
+      + '<div style="display:flex;justify-content:space-between;padding:4px 0 2px;margin-top:2px;border-top:1px solid #e0e0e0;font-weight:600"><span>= Gross work certified</span><strong>' + fmt(gp.grossBilled) + '</strong></div>'
+      + '<div style="display:flex;justify-content:space-between;padding:2px 0;color:#888"><span>of contract</span><span>' + fmt(gp.grossContract) + '</span></div>'
+      + '</div>';
+  }
+
   // Margin row
   const actCostTotal = labSum.actualSpent + matSum.actualSpent + ovhSum.actualSpent;
   const actBilTotal  = bs.actualSpent;
@@ -3308,9 +3328,14 @@ function renderForecastSection() {
     // Input VAT paid on purchases (cash out). Actual from QB bill tax (lagged like materials)
     // for past/current months; forecast as 20% of forecast materials for future months.
     const tInputVat = (m <= cur) ? (vatInput[mPrev] || 0) : (0.20 * (tM + tUnallocMaterials));
+    // CIS withheld from subbie labour this month: subbie is paid net (labour − CIS), the CIS is held back
+    // and remitted to HMRC ~the 22nd of the following month (see cisRemit pass below). Cost/margin still
+    // see labour gross (tCTotal unchanged) — CIS is a remittance timing shift, not a cost reduction.
+    // Actual from QB (job + unallocated combined) for past/current; ~20% of forecast labour ahead.
+    const tCisWithheld = (m <= cur) ? (cisWithheld[m] || 0) : (0.20 * (tL + tUnallocLabour));
     // Cash: VAT collected in, VAT paid out; the monthly settlement (added in the pass below) reverses the net.
     const cash = tNetBilling + tOutputVat + tRetFinal + tCreditsReceived + tDepositExpected - tCTotal - tInputVat - tLiab;
-    return {m, tL, tM, tO, tC, tCTotal, tGrossBilling, tRetHeld, tNetBilling, tLiab, tRetFinal, tCreditsReceived, tDepositExpected, tOutputVat, tInputVat, vatSettlement: 0, cash, tUnallocLabour, tUnallocMaterials};
+    return {m, tL, tM, tO, tC, tCTotal, tGrossBilling, tRetHeld, tNetBilling, tLiab, tRetFinal, tCreditsReceived, tDepositExpected, tOutputVat, tInputVat, vatSettlement: 0, tCisWithheld, cisRemit: 0, cash, tUnallocLabour, tUnallocMaterials};
   });
 
   // VAT settlement (monthly): the net VAT for the prior period (input − output) is reclaimed/paid
@@ -3322,6 +3347,16 @@ function renderForecastSection() {
       r.vatSettlement = src.tInputVat - src.tOutputVat; // + = reclaim (cash in), − = payment to HMRC
       r.cash += r.vatSettlement;
     }
+  });
+
+  // CIS remittance (monthly): labour is paid to subbies net of CIS this month (the CIS is held back — a
+  // cash retention), then that withheld CIS is paid to HMRC ~the 22nd of the following month. Net-neutral
+  // over time; this just shifts the CIS portion of labour one month later, matching real cash timing.
+  const CIS_LAG = 1; // months — CIS remitted to HMRC ~22nd of the following month
+  rows.forEach((r, i) => {
+    const src = rows[i - CIS_LAG];
+    r.cisRemit = src ? src.tCisWithheld : 0; // CIS paid to HMRC this month = last month's deduction
+    r.cash += r.tCisWithheld - r.cisRemit;   // hold this month's CIS back; remit last month's out
   });
 
   if (forecastChartInst) { forecastChartInst.destroy(); forecastChartInst = null; }
@@ -3527,8 +3562,8 @@ function renderForecastSection() {
     });
   }
 
-  let totL=0,totM=0,totO=0,totGross=0,totRetHeld=0,totLiab=0,totRetRec=0,totCredRec=0,totUnallocL=0,totUnallocM=0,totOutVat=0,totInVat=0,totVatSet=0,totCisSuf=0,totCashSum=0;
-  rows.forEach(r=>{totL+=r.tL;totM+=r.tM;totO+=r.tO;totGross+=r.tGrossBilling;totRetHeld+=r.tRetHeld;totLiab+=r.tLiab;totRetRec+=r.tRetFinal;totCredRec+=r.tCreditsReceived+r.tDepositExpected;totUnallocL+=r.tUnallocLabour;totUnallocM+=r.tUnallocMaterials;totOutVat+=r.tOutputVat;totInVat+=r.tInputVat;totVatSet+=r.vatSettlement;totCashSum+=r.cash;jobs.forEach(j=>{const a=j.actuals[r.m];if(a&&a.cis_deducted)totCisSuf+=a.cis_deducted;});});
+  let totL=0,totM=0,totO=0,totGross=0,totRetHeld=0,totLiab=0,totRetRec=0,totCredRec=0,totUnallocL=0,totUnallocM=0,totOutVat=0,totInVat=0,totVatSet=0,totCisWithheld=0,totCisRemit=0,totCashSum=0;
+  rows.forEach(r=>{totL+=r.tL;totM+=r.tM;totO+=r.tO;totGross+=r.tGrossBilling;totRetHeld+=r.tRetHeld;totLiab+=r.tLiab;totRetRec+=r.tRetFinal;totCredRec+=r.tCreditsReceived+r.tDepositExpected;totUnallocL+=r.tUnallocLabour;totUnallocM+=r.tUnallocMaterials;totOutVat+=r.tOutputVat;totInVat+=r.tInputVat;totVatSet+=r.vatSettlement;totCisWithheld+=r.tCisWithheld;totCisRemit+=r.cisRemit;totCashSum+=r.cash;});
   const totC=totL+totM+totO+totUnallocL+totUnallocM;
   const totNet=totGross-totRetHeld;
   const totCash=totCashSum;
@@ -3538,12 +3573,12 @@ function renderForecastSection() {
   <table style="font-size:13px;width:100%">
   <thead><tr>
     <th>Month</th>
-    <th>Costs${infoTip("Labour &amp; overhead in the month incurred; materials on a 30-day lag. Includes unallocated company costs not yet coded to a job in QB.")}</th>
+    <th>Costs${infoTip("Cash out on costs this month: labour (shown net — CIS withheld from subbies is held back and paid to HMRC separately, see CIS column) &amp; overhead in the month incurred, materials on a 30-day lag. Includes unallocated company costs not yet coded to a job in QB.")}</th>
     <th>Liabilities${infoTip("Recurring company outgoings due this month — loans, hire, lease, insurance, tax and other.")}</th>
     <th>Billing${infoTip("Gross billing before retention &amp; CIS, ex-VAT, timed by each job's payment terms.")}</th>
     <th>Retention${infoTip("Retention held back (−) and released / received (+) this month. Net shown; green = net cash in.")}</th>
     <th>VAT${infoTip("Output VAT collected (+), input VAT paid (−) and the monthly HMRC settlement. Net shown; usually a reclaim for RSE.")}</th>
-    <th>CIS${infoTip("CIS suffered on your billing — already netted into the Billing figure; shown here for reference.")}</th>
+    <th>CIS${infoTip("CIS deducted from subbie labour, paid to HMRC ~the 22nd of the following month (a standalone cash outflow, not netted with PAYE). Labour in the Costs column is already shown net of this. Separately, CIS suffered on your own billing is netted into the Billing figure.")}</th>
     <th>Credits${infoTip("Deposits and other credits received this month.")}</th>
     <th>Cash${infoTip("Net cash movement this month: everything in minus everything out.")}</th>
     <th>Balance${infoTip("Running cumulative cash position — opening balance plus each month's cash.")}</th>
@@ -3593,8 +3628,8 @@ function renderForecastSection() {
     liabilities.forEach(l => { if (getLiabMonths(l).has(r.m)) liabDetails.push({ name: l.name, amount: l.amount }); });
     const creditsThisMonth = credits.filter(c => c.received && c.receivedMonth === r.m);
 
-    let tCis = 0;
-    jobs.forEach(j => { const a = j.actuals[r.m]; if (a && a.cis_deducted) tCis += a.cis_deducted; });
+    // Costs shown as cash out: labour net of the CIS held back this month (CIS leaves separately to HMRC).
+    const tCostCash = r.tCTotal - r.tCisWithheld;
     const retNet = r.tRetFinal - r.tRetHeld;
     const vatNet = r.tOutputVat - r.tInputVat + r.vatSettlement;
     const totCred = r.tCreditsReceived + r.tDepositExpected;
@@ -3605,12 +3640,12 @@ function renderForecastSection() {
         <button onclick="toggleDetail('${detailId}','btn-${ri}')" id="btn-${ri}"
           style="width:22px;height:22px;border:1px solid #ddd;border-radius:4px;background:#fff;cursor:pointer;font-size:12px;margin-right:6px;line-height:1;vertical-align:middle">+</button>${monthLabel(r.m)}
       </td>
-      <td>${r.tCTotal>0?`<strong>${fmt(r.tCTotal)}</strong>`:dash}</td>
+      <td>${tCostCash>0?`<strong>${fmt(tCostCash)}</strong>`:dash}</td>
       <td>${r.tLiab>0?fmt(r.tLiab):dash}</td>
       <td>${r.tGrossBilling>0?'<strong>'+fmt(r.tGrossBilling)+'</strong>':dash}</td>
       <td>${(r.tRetHeld>0||r.tRetFinal>0)?`<span class="${retNet>=0?'green':'red'}">${retNet>=0?'+':''}${fmt(retNet)}</span>`:dash}</td>
       <td>${(r.tOutputVat>0||r.tInputVat>0||r.vatSettlement)?`<span class="${vatNet>=0?'green':'red'}">${vatNet>=0?'+':''}${fmt(vatNet)}</span>`:dash}</td>
-      <td>${tCis>0?`<span style="color:#888">−${fmt(tCis)}</span>`:dash}</td>
+      <td>${r.cisRemit>0?`<span style="color:#dc2626">−${fmt(r.cisRemit)}</span>`:dash}</td>
       <td>${totCred>0?`<span style="color:#6d28d9;font-weight:600">+${fmt(totCred)}</span>`:dash}</td>
       <td class="${r.cash>=0?'green':'red'}"><strong>${r.cash>=0?'+':''}${fmt(r.cash)}</strong></td>
       <td class="${cumulative>=0?'green':'red'}" style="font-style:italic;opacity:0.85">${cumulative>=0?'+':''}${fmt(cumulative)}</td>
@@ -3660,6 +3695,17 @@ function renderForecastSection() {
     if (r.tRetFinal > 0) chips.push(`<span style="background:#f0fdf4;color:#15803d;border:1px solid #bbf7d0;border-radius:6px;padding:3px 9px">Retention received${r.m >= cur ? ' (scheduled)' : ''}: +${fmt(r.tRetFinal)}</span>`);
     if (chips.length) detailHtml += `<div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:10px;font-size:11px">${chips.join('')}</div>`;
 
+    // Billing reconciliation — net billing (cash) + retention held = gross billed (work certified).
+    // Makes clear the forecast bills to the gross contract; retention is held back, not outstanding work.
+    if (r.tGrossBilling > 0 || r.tRetHeld > 0) {
+      detailHtml += `<div style="margin-top:10px;padding-top:8px;border-top:1px solid #e0e0e0;font-size:12px">
+        <div style="color:#888;margin-bottom:4px">Billing reconciliation</div>
+        <div style="display:flex;justify-content:space-between"><span>Net billing (cash in)</span><strong>${fmt(r.tNetBilling)}</strong></div>
+        <div style="display:flex;justify-content:space-between;color:#dc2626"><span>+ Retention held (released later)</span><span>${r.tRetHeld>0?fmt(r.tRetHeld):'—'}</span></div>
+        <div style="display:flex;justify-content:space-between;border-top:1px solid #eee;padding-top:3px;margin-top:3px"><span style="font-weight:600">= Gross billed (work certified)</span><strong>${fmt(r.tGrossBilling)}</strong></div>
+      </div>`;
+    }
+
     // Net cash strip
     detailHtml += `<div style="margin-top:10px;padding-top:8px;border-top:1px solid #e0e0e0;font-size:12px;display:flex;justify-content:space-between;align-items:center">
         <span style="color:#888">Net cash this month</span>
@@ -3674,12 +3720,12 @@ function renderForecastSection() {
   const totVatNet = totOutVat - totInVat + totVatSet;
   fctbl += `<tr style="background:#f0f0f0;font-weight:600">
     <td>Total</td>
-    <td>${fmt(totC)}</td>
+    <td>${fmt(totC - totCisWithheld)}</td>
     <td>${totLiab>0?fmt(totLiab):'—'}</td>
     <td>${fmt(totGross)}</td>
     <td class="${totRetNet>=0?'green':'red'}">${(totRetHeld||totRetRec)?(totRetNet>=0?'+':'')+fmt(totRetNet):'—'}</td>
     <td class="${totVatNet>=0?'green':'red'}">${(totOutVat||totInVat||totVatSet)?(totVatNet>=0?'+':'')+fmt(totVatNet):'—'}</td>
-    <td style="color:#888">${totCisSuf>0?'−'+fmt(totCisSuf):'—'}</td>
+    <td style="color:#dc2626">${totCisRemit>0?'−'+fmt(totCisRemit):'—'}</td>
     <td style="color:#6d28d9">${totCredRec>0?'+'+fmt(totCredRec):'—'}</td>
     <td class="${totCash>=0?'green':'red'}">${totCash>=0?'+':''}${fmt(totCash)}</td>
     <td class="${totCash>=0?'green':'red'}" style="font-style:italic">${totCash>=0?'+':''}${fmt(totCash)}</td>
