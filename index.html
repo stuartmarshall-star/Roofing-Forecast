@@ -215,7 +215,7 @@
     </form>
     <div class="login-error" id="login-error"></div>
     <div class="login-hint">Shared login for Stuart &amp; accountant</div>
-    <div style="margin-top:1.5rem;font-size:10px;color:#bbb;font-family:monospace">v2.98-Aug-10</div>
+    <div style="margin-top:1.5rem;font-size:10px;color:#bbb;font-family:monospace">v2.99-Aug-10</div>
   </div>
 </div>
 
@@ -256,7 +256,7 @@
         <span id="conn-dot-circle" style="width:8px;height:8px;border-radius:50%;background:#d1d5db;display:inline-block;flex-shrink:0"></span>
         <span id="conn-dot-label">Connecting</span>
       </span>
-      <div class="app-ver" title="Build version">v2.98-Aug-10</div>
+      <div class="app-ver" title="Build version">v2.99-Aug-10</div>
       <button class="btn app-signout" onclick="handleLogout()" title="Sign out">Sign out</button>
     </div>
   </aside>
@@ -1122,7 +1122,16 @@ function buildSchedule(job, field) {
     }
   });
 
-  const remaining = Math.max(0, originalTotal - spentActual);
+  let remaining = Math.max(0, originalTotal - spentActual);
+  // Billing: never forecast more than the GROSS work still to certify (contract − gross certified),
+  // converted to the net cash it will raise (retention still held on future work). The old net-assumption
+  // target (contract × assumed-retention × assumed-CIS) rarely matches the real net billed from QB, so it
+  // left a residual that showed as a phantom "month to bill" even on fully-certified jobs. Capping by gross
+  // remaining ties billing to the real contract: once the gross work is certified, there is nothing left.
+  if (field === 'billing') {
+    const grossRemainingNet = Math.max(0, (job.contract || 0) - grossBilledToDate(job)) * (1 - (job.retention || 0) / 100);
+    remaining = Math.min(remaining, grossRemainingNet);
+  }
   // Spread the remaining balance over CURRENT/FUTURE open months only. A past month
   // with no actual (m < cur) is forced to 0 in the output loop below, so including it
   // here would silently steal its share of the balance and drop it from the forecast.
@@ -1155,7 +1164,7 @@ function buildSchedule(job, field) {
     } else if (job.paused) {
       // Job on hold — frozen: only recorded actuals show, no forecast in any month
       result[m] = { value: 0, type: 'paused' };
-    } else if (isComplete && field !== 'billing') {
+    } else if (isComplete) {
       result[m] = { value: 0, type: 'complete' };
     } else if (m < cur && hasActuals) {
       // Past month with no actual entered — treat as zero (period is closed)
@@ -1190,7 +1199,12 @@ function getEffectiveMonths(job) {
   // Check if any field has remaining balance vs scheduled actuals
   const fields = ['billing', 'labour', 'materials', 'overhead'];
   const hasBalance = fields.some(field => {
-    const total = field === 'billing' ? netBillingTotal(job) : field === 'labour' ? netLabourTotal(job) : job[field];
+    // Billing: extend only if GROSS work is still uncertified — not because the net-assumption
+    // target differs from what's really been billed (that gap is not real work to bill).
+    if (field === 'billing') {
+      return ((job.contract || 0) - grossBilledToDate(job)) > 0.5;
+    }
+    const total = field === 'labour' ? netLabourTotal(job) : job[field];
     let spent = 0;
     scheduled.forEach(m => {
       const a = job.actuals[m] && job.actuals[m][field] !== undefined ? job.actuals[m][field] : null;
@@ -2855,21 +2869,6 @@ function renderActualsSection() {
     + '<div style="font-size:11px;color:#888;margin-top:2px">Forecast spend still to come</div>'
     + '</div>'
     + '</div>';
-
-  // Billing reconciliation — net received + retention held (+ CIS suffered) = gross work certified.
-  // Same "gross bottom line" as the forecast waterfall: retention is held back, not unbilled work.
-  let retHeldToDate = 0;
-  Object.values(j.actuals || {}).forEach((a) => { if (a && a.retention) retHeldToDate += a.retention; });
-  if (gp.grossBilled > 0 || retHeldToDate > 0) {
-    bal += '<div class="card" style="padding:.75rem 1rem;margin-bottom:1rem;font-size:12px">'
-      + '<div style="color:#888;margin-bottom:6px;font-weight:500">Billing reconciliation</div>'
-      + '<div style="display:flex;justify-content:space-between;padding:2px 0"><span>Net billing received (cash in)</span><strong>' + fmt(bs.actualSpent) + '</strong></div>'
-      + '<div style="display:flex;justify-content:space-between;padding:2px 0;color:#dc2626"><span>+ Retention held (released later)</span><span>' + (retHeldToDate > 0 ? fmt(retHeldToDate) : '—') + '</span></div>'
-      + (totalCisDeducted > 0 ? '<div style="display:flex;justify-content:space-between;padding:2px 0;color:#dc2626"><span>+ CIS suffered (deducted by client)</span><span>' + fmt(totalCisDeducted) + '</span></div>' : '')
-      + '<div style="display:flex;justify-content:space-between;padding:4px 0 2px;margin-top:2px;border-top:1px solid #e0e0e0;font-weight:600"><span>= Gross work certified</span><strong>' + fmt(gp.grossBilled) + '</strong></div>'
-      + '<div style="display:flex;justify-content:space-between;padding:2px 0;color:#888"><span>of contract</span><span>' + fmt(gp.grossContract) + '</span></div>'
-      + '</div>';
-  }
 
   // Margin row
   const actCostTotal = labSum.actualSpent + matSum.actualSpent + ovhSum.actualSpent;
