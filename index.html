@@ -215,7 +215,7 @@
     </form>
     <div class="login-error" id="login-error"></div>
     <div class="login-hint">Shared login for Stuart &amp; accountant</div>
-    <div style="margin-top:1.5rem;font-size:10px;color:#bbb;font-family:monospace">v2.94-Aug-09</div>
+    <div style="margin-top:1.5rem;font-size:10px;color:#bbb;font-family:monospace">v2.95-Aug-10</div>
   </div>
 </div>
 
@@ -256,7 +256,7 @@
         <span id="conn-dot-circle" style="width:8px;height:8px;border-radius:50%;background:#d1d5db;display:inline-block;flex-shrink:0"></span>
         <span id="conn-dot-label">Connecting</span>
       </span>
-      <div class="app-ver" title="Build version">v2.94-Aug-09</div>
+      <div class="app-ver" title="Build version">v2.95-Aug-10</div>
       <button class="btn app-signout" onclick="handleLogout()" title="Sign out">Sign out</button>
     </div>
   </aside>
@@ -1234,10 +1234,13 @@ function getRetentionTotal(job) {
   const hasActualRet = Object.values(actuals).some(a => a && a.retention != null);
   if (!hasActualRet) return job.contract * (job.retention / 100);
   const actualHeld = Object.values(actuals).reduce((s, a) => s + (a && a.retention ? a.retention : 0), 0);
-  const billedNet  = Object.values(actuals).reduce((s, a) => s + (a && a.billing   ? a.billing   : 0), 0);
-  const remainingNet = Math.max(0, netBillingTotal(job) - billedNet);
-  const retRate = job.retention / 100;
-  const remainingRet = retRate < 1 ? remainingNet * retRate / (1 - retRate) : 0;
+  // A complete job's held retention IS the total — don't estimate more.
+  if (isJobComplete(job)) return actualHeld;
+  // In progress: add estimated retention (job %) on the remaining un-invoiced GROSS work
+  // (contract − work certified). Basing this on gross work — not net billing — stops the CIS
+  // deduction gap being mistaken for unbilled work, which was inflating the figure.
+  const grossRemaining = Math.max(0, (job.contract || 0) - grossBilledToDate(job));
+  const remainingRet = grossRemaining * (job.retention / 100);
   return actualHeld + remainingRet;
 }
 
