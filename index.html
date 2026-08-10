@@ -215,7 +215,7 @@
     </form>
     <div class="login-error" id="login-error"></div>
     <div class="login-hint">Shared login for Stuart &amp; accountant</div>
-    <div style="margin-top:1.5rem;font-size:10px;color:#bbb;font-family:monospace">v3.00-Aug-10</div>
+    <div style="margin-top:1.5rem;font-size:10px;color:#bbb;font-family:monospace">v3.01-Aug-10</div>
   </div>
 </div>
 
@@ -256,7 +256,7 @@
         <span id="conn-dot-circle" style="width:8px;height:8px;border-radius:50%;background:#d1d5db;display:inline-block;flex-shrink:0"></span>
         <span id="conn-dot-label">Connecting</span>
       </span>
-      <div class="app-ver" title="Build version">v3.00-Aug-10</div>
+      <div class="app-ver" title="Build version">v3.01-Aug-10</div>
       <button class="btn app-signout" onclick="handleLogout()" title="Sign out">Sign out</button>
     </div>
   </aside>
@@ -2880,15 +2880,17 @@ function renderActualsSection() {
     + '</div>'
     + '</div>';
 
-  // Margin row — revenue measured on the QuickBooks "income" basis so the app reconciles to QB:
-  //   income = net billing (ex-retention) + CIS suffered. CIS deducted by the client is tax withheld
-  //   on your behalf (recovered against your own HMRC account), NOT lost income — QB keeps it in income,
-  //   so the app must too. Retention is excluded to match QB (it posts to accrued income, off the P&L).
+  // Margin row — revenue = full work certified (income INCLUDING retention). Retention is earned income;
+  // QB only defers it to accrued income to track it until it's invoiced/released, but it is still ours, so
+  // it belongs in margin. CIS suffered is also income (tax withheld on our behalf, recovered from HMRC).
+  //   actual income  = net billing + retention + CIS suffered = grossBilledToDate
+  //   forecast income = the full gross contract (retention included)
+  // NB this runs ~retention% ABOVE the QB Project Profitability report, which excludes retention by design.
   const actCostTotal = labSum.actualSpent + matSum.actualSpent + ovhSum.actualSpent;
   const actBilTotal  = bs.actualSpent;
-  const actIncome    = actBilTotal + totalCisDeducted;
+  const actIncome    = grossBilledToDate(j);
   const fcCostTotal  = netLabourTotal(j) + j.materials + j.overhead;
-  const fcIncome     = (j.contract || 0) * (1 - (j.retention || 0) / 100);
+  const fcIncome     = (j.contract || 0);
   const fcMargin     = fcIncome > 0 ? (fcIncome - fcCostTotal) / fcIncome * 100 : 0;
   const actMargin    = actIncome > 0 ? (actIncome - actCostTotal) / actIncome * 100 : null;
   const actProfit    = actIncome > 0 ? actIncome - actCostTotal : null;
@@ -2900,12 +2902,12 @@ function renderActualsSection() {
     + '<div class="balance-box">'
     + '<div class="balance-box-label">Forecast margin</div>'
     + '<div class="balance-box-val">' + fmtPct(fcMargin) + '</div>'
-    + '<div style="font-size:11px;color:#888;margin-top:2px">Profit ' + fmt(fcProfit) + ' on income ' + fmt(fcIncome) + ' (ex-retention)</div>'
+    + '<div style="font-size:11px;color:#888;margin-top:2px">Profit ' + fmt(fcProfit) + ' on contract ' + fmt(fcIncome) + ' (incl. retention)</div>'
     + '</div>'
     + '<div class="balance-box">'
     + '<div class="balance-box-label">Actual margin to date</div>'
     + '<div class="balance-box-val" style="color:' + marginCol + '">' + (actMargin !== null ? fmtPct(actMargin) : '—') + '</div>'
-    + '<div style="font-size:11px;color:#888;margin-top:2px">' + (actProfit !== null ? 'Profit ' + fmt(actProfit) + ' on ' + fmt(actIncome) + ' income' + (totalCisDeducted > 0 ? ' (incl. ' + fmt(totalCisDeducted) + ' CIS)' : '') : 'No billing actuals yet') + '</div>'
+    + '<div style="font-size:11px;color:#888;margin-top:2px">' + (actProfit !== null ? 'Profit ' + fmt(actProfit) + ' on ' + fmt(actIncome) + ' work certified (incl. retention' + (totalCisDeducted > 0 ? ' &amp; ' + fmt(totalCisDeducted) + ' CIS' : '') + ')' : 'No billing actuals yet') + '</div>'
     + '</div>'
     + '<div class="balance-box">'
     + '<div class="balance-box-label">Margin variance</div>'
@@ -3393,7 +3395,7 @@ function renderForecastSection() {
         const a = j.actuals[r.m];
         if (a) {
           rmActCost         += (a.labour||0) + (a.materials||0) + (a.overhead||0);
-          rmActGrossBilling += (a.billing||0) + (a.retention||0);   // add retention back = work certified
+          rmActGrossBilling += (a.billing||0) + (a.retention||0) + (a.cis_deducted||0);   // billing + retention + CIS = work certified (income)
         }
       });
       rmActMonths++;
