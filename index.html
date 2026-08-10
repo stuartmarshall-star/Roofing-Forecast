@@ -215,7 +215,7 @@
     </form>
     <div class="login-error" id="login-error"></div>
     <div class="login-hint">Shared login for Stuart &amp; accountant</div>
-    <div style="margin-top:1.5rem;font-size:10px;color:#bbb;font-family:monospace">v3.01-Aug-10</div>
+    <div style="margin-top:1.5rem;font-size:10px;color:#bbb;font-family:monospace">v3.02-Aug-10</div>
   </div>
 </div>
 
@@ -256,7 +256,7 @@
         <span id="conn-dot-circle" style="width:8px;height:8px;border-radius:50%;background:#d1d5db;display:inline-block;flex-shrink:0"></span>
         <span id="conn-dot-label">Connecting</span>
       </span>
-      <div class="app-ver" title="Build version">v3.01-Aug-10</div>
+      <div class="app-ver" title="Build version">v3.02-Aug-10</div>
       <button class="btn app-signout" onclick="handleLogout()" title="Sign out">Sign out</button>
     </div>
   </aside>
@@ -284,6 +284,7 @@
         <input type="file" id="credits-csv-input" accept=".csv" style="display:none" onchange="handleCreditsCsvImport(this)">
         <button id="btn-qbo-connect" class="btn" style="background:#2ca01c;color:#fff;border-color:#2ca01c;display:none" onclick="qboConnect()">🔗 Connect QuickBooks</button>
         <button id="btn-qbo-sync" class="btn" style="background:#0077c5;color:#fff;border-color:#0077c5;display:none" onclick="qboSync()">⟳ Sync from QB</button>
+        <button id="btn-qbo-resync" class="btn" style="display:none" onclick="qboSync(false, true)" title="Pull all history from QuickBooks — slower; use after a back-dated edit to a closed month">↻ Full resync</button>
         <span id="qbo-status" style="font-size:11px;color:#888"></span>
         <button class="btn btn-primary" onclick="openAddJob()">+ Add job</button>
       </div>
@@ -4674,11 +4675,15 @@ async function qboCheckConnection() {
     const connected = res.ok && data && data.connected === true;
     document.getElementById('btn-qbo-connect').style.display = connected ? 'none' : 'inline-flex';
     document.getElementById('btn-qbo-sync').style.display    = connected ? 'inline-flex' : 'none';
+    const rsBtn = document.getElementById('btn-qbo-resync');
+    if (rsBtn) rsBtn.style.display = connected ? 'inline-flex' : 'none';
     document.getElementById('qbo-status').textContent        = connected ? '✓ QB connected' : '';
     return connected;
   } catch {
     document.getElementById('btn-qbo-connect').style.display = 'inline-flex';
     document.getElementById('btn-qbo-sync').style.display    = 'none';
+    const rsBtn = document.getElementById('btn-qbo-resync');
+    if (rsBtn) rsBtn.style.display = 'none';
     return false;
   }
 }
@@ -4728,13 +4733,17 @@ async function qboConnect() {
   }
 }
 
-async function qboSync(silent = false) {
+async function qboSync(silent = false, fullSync = false) {
   const statusEl = document.getElementById('qbo-status');
   const btn      = document.getElementById('btn-qbo-sync');
+  const btnFull  = document.getElementById('btn-qbo-resync');
   if (!silent) {
     btn.textContent    = '⟳ Syncing...';
     btn.disabled       = true;
-    statusEl.textContent = 'Syncing from QuickBooks...';
+    if (btnFull) btnFull.disabled = true;
+    statusEl.textContent = fullSync
+      ? 'Full resync from QuickBooks (all history — this can take up to a minute)...'
+      : 'Syncing recent months from QuickBooks...';
   }
 
   try {
@@ -4744,7 +4753,7 @@ async function qboSync(silent = false) {
         'Content-Type': 'application/json',
         'Authorization': 'Bearer ' + sbAuthToken()
       },
-      body: JSON.stringify({ lastSyncTime: getLastSyncTime() })
+      body: JSON.stringify({ lastSyncTime: getLastSyncTime(), fullSync })
     });
     const data = await res.json();
 
@@ -4762,7 +4771,9 @@ async function qboSync(silent = false) {
     const s = data.summary;
     const a = data.applied;
     const lastSyncStr = 'Last sync: ' + new Date().toLocaleDateString('en-GB', {day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'});
-    const syncMode = s.syncMode === 'incremental' ? `incremental since ${s.sinceDateFilter}` : 'full sync';
+    const syncMode = data.mode === 'full'
+      ? 'full resync'
+      : ('quick sync' + (data.sweepFromMonth ? ' (' + data.sweepFromMonth + '→now)' : ''));
     statusEl.textContent = (silent ? '✓ Auto-synced — ' : '✓ Synced — ')
       + syncMode + ', '
       + s.projectsFound + ' projects, '
@@ -4847,6 +4858,7 @@ async function qboSync(silent = false) {
     if (!silent) {
       btn.textContent = '⟳ Sync from QB';
       btn.disabled    = false;
+      if (btnFull) { btnFull.textContent = '↻ Full resync'; btnFull.disabled = false; }
     }
   }
 }
