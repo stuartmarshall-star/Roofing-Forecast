@@ -215,7 +215,7 @@
     </form>
     <div class="login-error" id="login-error"></div>
     <div class="login-hint">Shared login for Stuart &amp; accountant</div>
-    <div style="margin-top:1.5rem;font-size:10px;color:#bbb;font-family:monospace">v2.95-Aug-10</div>
+    <div style="margin-top:1.5rem;font-size:10px;color:#bbb;font-family:monospace">v2.96-Aug-10</div>
   </div>
 </div>
 
@@ -256,7 +256,7 @@
         <span id="conn-dot-circle" style="width:8px;height:8px;border-radius:50%;background:#d1d5db;display:inline-block;flex-shrink:0"></span>
         <span id="conn-dot-label">Connecting</span>
       </span>
-      <div class="app-ver" title="Build version">v2.95-Aug-10</div>
+      <div class="app-ver" title="Build version">v2.96-Aug-10</div>
       <button class="btn app-signout" onclick="handleLogout()" title="Sign out">Sign out</button>
     </div>
   </aside>
@@ -1053,8 +1053,10 @@ function netBillingTotal(job) {
 
 // Net labour total for a job — 80% of gross if CIS applicable, unless gross status is on.
 function netLabourTotal(job) {
-  if (grossStatus || !job.cis) return job.labour;
-  return job.labour * 0.80;
+  // Labour is always GROSS now — budgeted gross and captured gross from QB. The CIS withheld from
+  // subbies is a separate company-level monthly HMRC lump sum (not a per-job cost), so it no longer
+  // haircuts the job's labour. Keeps cost + margin honest against the gross contract.
+  return job.labour;
 }
 
 function buildSchedule(job, field) {
