@@ -237,7 +237,7 @@
     </form>
     <div class="login-error" id="login-error"></div>
     <div class="login-hint">Shared login for Stuart &amp; accountant</div>
-    <div style="margin-top:1.5rem;font-size:10px;color:#bbb;font-family:monospace">v3.05-Aug-11</div>
+    <div style="margin-top:1.5rem;font-size:10px;color:#bbb;font-family:monospace">v3.06-Aug-11</div>
   </div>
 </div>
 
@@ -279,7 +279,7 @@
         <span id="conn-dot-circle" style="width:8px;height:8px;border-radius:50%;background:#d1d5db;display:inline-block;flex-shrink:0"></span>
         <span id="conn-dot-label">Connecting</span>
       </span>
-      <div class="app-ver" title="Build version">v3.05-Aug-11</div>
+      <div class="app-ver" title="Build version">v3.06-Aug-11</div>
       <button class="btn app-signout" onclick="handleLogout()" title="Sign out">Sign out</button>
     </div>
   </aside>
@@ -1318,12 +1318,23 @@ function getSecondMoietyMonth(job) {
 function getRetentionReleaseSchedule(job) {
   const total = getRetentionTotal(job);
   if (!total) return {};
-  const half = total / 2;
+  // Retention already released back per QB (actual receipts) — the forecast only projects what's LEFT,
+  // so an actual release and the forecast schedule never double-count the same moiety.
+  const releasedQB = Object.values(job.actuals || {}).reduce((s, a) => s + ((a && a.retention_released) || 0), 0);
+  const outstanding = Math.max(0, total - releasedQB);
+  if (outstanding <= 0.5) return {};
   const releases = {};
   const m1 = getFirstMoietyMonth(job);
   const m2 = getSecondMoietyMonth(job);
-  if (m1) releases[m1] = (releases[m1] || 0) + half;
-  if (m2) releases[m2] = (releases[m2] || 0) + half;
+  if (releasedQB <= 0.5) {
+    // nothing released yet — classic 50/50 across the two moieties
+    if (m1) releases[m1] = (releases[m1] || 0) + total / 2;
+    if (m2) releases[m2] = (releases[m2] || 0) + total / 2;
+  } else {
+    // first moiety already (part-)released via QB — schedule the remaining outstanding at the 2nd moiety
+    if (m2) releases[m2] = (releases[m2] || 0) + outstanding;
+    else if (m1) releases[m1] = (releases[m1] || 0) + outstanding;
+  }
   return releases;
 }
 
@@ -1354,6 +1365,12 @@ function getTotalRetentionHeldForMonth(month) {
 // Returns total retention cash actually received in a given month (based on marked-received date)
 function getRetentionReceivedForMonth(month) {
   return jobs.reduce((sum, j) => {
+    const acts = j.actuals || {};
+    // ACTUAL retention releases from QB take precedence when present for this job (positive
+    // retention lines billed back). Falls back to the manual moiety marking (Retentions tab).
+    if (Object.values(acts).some(a => a && a.retention_released)) {
+      return sum + ((acts[month] && acts[month].retention_released) || 0);
+    }
     const half = getRetentionTotal(j) / 2;
     const rr = j.retentionReleases || {};
     const rd = j.retentionReceivedDates || {};
@@ -2934,13 +2951,27 @@ function renderActualsSection() {
     const _half = _retTotal / 2;
     const _rr = j.retentionReleases || {}, _ra = j.retentionInvoiceAmounts || {}, _rdt = j.retentionInvoiceDates || {};
     const _cur = getCurrentMonth();
+    // Prefer ACTUAL releases from QB (a.retention_released) over the manual moiety marking.
+    const _qbReleased = Object.values(j.actuals || {}).reduce((s, a) => s + ((a && a.retention_released) || 0), 0);
+    const _hasQb = _qbReleased > 0.5;
+    const _qbRelMonths = Object.keys(j.actuals || {}).filter(m => (j.actuals[m] || {}).retention_released).sort();
     const _relAmt = k => _rr[k] ? (_ra[k] != null ? _ra[k] : _half) : 0;
-    const _released = _relAmt('m1') + _relAmt('m2');
-    const _outstanding = _retTotal - _released;
+    const _released = _hasQb ? _qbReleased : (_relAmt('m1') + _relAmt('m2'));
+    const _outstanding = Math.max(0, _retTotal - _released);
     const _moiety = (k, mth, label) => {
-      const rel = _rr[k], due = mth && mth <= _cur && !rel;
-      const stat = rel
-        ? '<span class="badge badge-actual">Released ' + fmt(_ra[k] != null ? _ra[k] : _half) + (_rdt[k] ? ' &middot; ' + new Date(_rdt[k]).toLocaleDateString('en-GB', {day:'numeric',month:'short',year:'2-digit'}) : '') + '</span>'
+      // QB actuals fill the moieties in order (1st up to half, then the rest to 2nd); else manual marks.
+      let done, amt, when;
+      if (_hasQb) {
+        amt = k === 'm1' ? Math.min(_qbReleased, _half) : Math.max(0, _qbReleased - _half);
+        done = amt > 0.5;
+        when = _qbRelMonths.length ? monthLabel(_qbRelMonths[k === 'm1' ? 0 : _qbRelMonths.length - 1]) : '';
+      } else {
+        done = !!_rr[k]; amt = _ra[k] != null ? _ra[k] : _half;
+        when = _rdt[k] ? new Date(_rdt[k]).toLocaleDateString('en-GB', {day:'numeric',month:'short',year:'2-digit'}) : '';
+      }
+      const due = !done && mth && mth <= _cur;
+      const stat = done
+        ? '<span class="badge badge-actual">Released ' + fmt(amt) + (when ? ' &middot; ' + when : '') + '</span>'
         : due ? '<span style="background:#fef9c3;color:#a16207;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:500">Due now</span>'
               : '<span class="badge badge-forecast">Forecast &middot; ' + (mth ? monthLabel(mth) : 'TBC') + '</span>';
       return '<div style="display:flex;justify-content:space-between;align-items:center;padding:5px 0;font-size:12px;border-top:1px solid #f0f0f0"><span style="color:#555">' + label + '<span style="color:#aaa"> &middot; ' + fmt(_half) + '</span></span><span>' + stat + '</span></div>';
