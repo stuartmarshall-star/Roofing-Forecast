@@ -237,7 +237,7 @@
     </form>
     <div class="login-error" id="login-error"></div>
     <div class="login-hint">Shared login for Stuart &amp; accountant</div>
-    <div style="margin-top:1.5rem;font-size:10px;color:#bbb;font-family:monospace">v3.07-Aug-11</div>
+    <div style="margin-top:1.5rem;font-size:10px;color:#bbb;font-family:monospace">v3.08-Aug-11</div>
   </div>
 </div>
 
@@ -279,7 +279,7 @@
         <span id="conn-dot-circle" style="width:8px;height:8px;border-radius:50%;background:#d1d5db;display:inline-block;flex-shrink:0"></span>
         <span id="conn-dot-label">Connecting</span>
       </span>
-      <div class="app-ver" title="Build version">v3.07-Aug-11</div>
+      <div class="app-ver" title="Build version">v3.08-Aug-11</div>
       <button class="btn app-signout" onclick="handleLogout()" title="Sign out">Sign out</button>
     </div>
   </aside>
@@ -1264,14 +1264,6 @@ function getEffectiveMonths(job) {
   }
 }
 
-function getSummary(job, field) {
-  const originalTotal = field === 'billing' ? netBillingTotal(job) : field === 'labour' ? netLabourTotal(job) : job[field];
-  const sched = buildSchedule(job, field);
-  let actualSpent = 0;
-  Object.keys(sched).forEach(m => { if (sched[m].type === 'actual') actualSpent += sched[m].value; });
-  return { originalTotal, actualSpent, balance: Math.max(0, originalTotal - actualSpent), overrun: Math.max(0, actualSpent - originalTotal) };
-}
-
 // ── Retention engine ─────────────────────────────────────────────────────────
 function addMonths(ym, n) {
   const [y, m] = ym.split('-').map(Number);
@@ -1377,6 +1369,43 @@ function getRetentionReceivedForMonth(month) {
     const ra = j.retentionInvoiceAmounts || {};
     if (rr.m1 && rd.m1 === month) sum += ra.m1 != null ? ra.m1 : half;
     if (rr.m2 && rd.m2 === month) sum += ra.m2 != null ? ra.m2 : half;
+    return sum;
+  }, 0);
+}
+
+// Total retention CASH landing in a month across all jobs = actual received + forecast of the
+// remaining outstanding, decided PER JOB. This replaces an all-or-nothing portfolio ternary
+// (if any one job had an actual release, every other job's forecast release was dropped from the
+// month — silently losing forecast retention cash). Per job: a QB-tracked job uses its actual
+// receipt this month plus its outstanding-only schedule (the schedule already nets QB releases,
+// so the two are additive-safe); a manually-marked job uses the marked moiety as actual and only
+// forecasts the UNMARKED moiety; a job with no releases at all uses the pure forecast schedule.
+// Forecast is only counted for current/future months (m >= cur).
+function getRetentionCashForMonth(month, cur) {
+  return jobs.reduce((sum, j) => {
+    const acts = j.actuals || {};
+    const rr = j.retentionReleases || {};
+    const hasQBrelease = Object.values(acts).some(a => a && a.retention_released);
+    if (hasQBrelease) {
+      let v = (acts[month] && acts[month].retention_released) || 0;
+      if (month >= cur) { const s = getRetentionReleaseSchedule(j); v += s[month] || 0; }
+      return sum + v;
+    }
+    if (rr.m1 || rr.m2) {
+      const half = getRetentionTotal(j) / 2;
+      const rd = j.retentionReceivedDates || {};
+      const ra = j.retentionInvoiceAmounts || {};
+      let v = 0;
+      if (rr.m1 && rd.m1 === month) v += ra.m1 != null ? ra.m1 : half;
+      if (rr.m2 && rd.m2 === month) v += ra.m2 != null ? ra.m2 : half;
+      // forecast only the moiety that hasn't been marked received yet
+      if (month >= cur) {
+        if (!rr.m1 && getFirstMoietyMonth(j) === month) v += half;
+        if (!rr.m2 && getSecondMoietyMonth(j) === month) v += half;
+      }
+      return sum + v;
+    }
+    if (month >= cur) { const s = getRetentionReleaseSchedule(j); return sum + (s[month] || 0); }
     return sum;
   }, 0);
 }
@@ -1758,8 +1787,16 @@ function renderPortfolio() {
     });
     const half = getRetentionTotal(j) / 2;
     totalHeld += getRetentionTotal(j) * fraction;
-    if (j.retentionReleases && j.retentionReleases.m1) totalReleased += half * fraction;
-    if (j.retentionReleases && j.retentionReleases.m2) totalReleased += half * fraction;
+    // Released prefers QB actuals (a.retention_released), matching the per-job "Retention pot".
+    // The old code counted only manual moiety ticks, so a QB-synced release left the portfolio
+    // "Retention outstanding" showing the full amount as still held — disagreeing with the job card.
+    const qbReleased = Object.values(j.actuals || {}).reduce((s, a) => s + ((a && a.retention_released) || 0), 0);
+    if (qbReleased > 0.5) {
+      totalReleased += qbReleased * fraction;
+    } else {
+      if (j.retentionReleases && j.retentionReleases.m1) totalReleased += half * fraction;
+      if (j.retentionReleases && j.retentionReleases.m2) totalReleased += half * fraction;
+    }
   });
   const fcMarginPct = totalContract > 0 ? (totalContract - totalCost) / totalContract * 100 : 0;
   const actMarginPct = totalActBilling > 0 ? (totalActBilling - totalActCost) / totalActBilling * 100 : null;
@@ -1851,8 +1888,8 @@ function renderSummary() {
     if (!elapsed.length) { if (risks.length) atRisk.push({ j, risks }); return; }
     const n = elapsed.length;
     const fcBpm = netBillingTotal(j) / j.dur;
-    let actCost=0, actBil=0, hasAny=false;
-    elapsed.forEach(m => { const a = j.actuals[m]; if (a) { actCost += (a.labour||0)+(a.materials||0)+(a.overhead||0); actBil += a.billing||0; hasAny = true; } });
+    let actCost=0, actBil=0, actCert=0, hasAny=false;
+    elapsed.forEach(m => { const a = j.actuals[m]; if (a) { actCost += (a.labour||0)+(a.materials||0)+(a.overhead||0); actBil += a.billing||0; actCert += (a.billing||0)+(a.retention||0)+(a.cis_deducted||0); hasAny = true; } });
     if (hasAny) {
       // Total budgeted costs and net contract value
       const totalBudgetCost = netLabourTotal(j) + j.materials + j.overhead;
@@ -1877,9 +1914,12 @@ function renderSummary() {
       if (billingBehind > fcBil * 0.1) risks.push({ type: 'billing', label: 'Billing ' + fmt(billingBehind) + ' behind prorated forecast', severity: billingBehind > fcBil * 0.2 ? 'high' : 'medium' });
 
       // ── Billing recovery check ───────────────────────────────────────────────
-      const billingVsCost = actBil - actCost;
-      if (actCost > 0 && billingVsCost < -(actCost * 0.1)) {
-        const shortfall = actCost - actBil;
+      // Compare GROSS work certified (billing + retention + CIS) to gross cost — not net billing,
+      // which sits structurally below gross and tripped this "behind costs" flag on jobs that were
+      // actually on-margin. Skip complete jobs (retention/CIS tail is not a shortfall).
+      const billingVsCost = actCert - actCost;
+      if (!isJobComplete(j) && actCost > 0 && billingVsCost < -(actCost * 0.1)) {
+        const shortfall = actCost - actCert;
         const remainingMonths = Math.max(1, j.dur - n);
         const remainingContract = Math.max(0, netBillingTotal(j) - actBil);
         const catchUpMonths = Math.min(2, remainingMonths);
@@ -2034,9 +2074,11 @@ function renderJobsTable() {
       labour    = hasActuals ? actL : netLabourTotal(j);
       materials = hasActuals ? actM : j.materials;
       overhead  = hasActuals ? actO : j.overhead;
-      // Contract = total billed (actuals billing + retention still held)
-      const retHeld = hasActuals ? j.contract * j.retention / 100 : 0;
-      contract  = hasActuals ? actB + retHeld : j.contract;
+      // Income basis = gross work certified (net billing + ACTUAL retention held + ACTUAL CIS
+      // suffered) via grossBilledToDate — the same basis as the job card and forecast margins.
+      // The old code added an ESTIMATED retention (contract × ret%) and omitted CIS entirely, so
+      // this table's margin disagreed with the job card for CIS jobs and after variations.
+      contract  = hasActuals ? grossBilledToDate(j) : j.contract;
     } else {
       labour    = netLabourTotal(j);
       materials = j.materials;
@@ -3431,8 +3473,7 @@ function renderForecastSection() {
     const tLiab = getTotalLiabilitiesForMonth(m);
     // Retention: past months use actual received, future months use scheduled release dates.
     // If already marked received in a future month, actuals take precedence.
-    const tRetActual = getRetentionReceivedForMonth(m);
-    const tRetFinal = tRetActual > 0 ? tRetActual : (m >= cur ? getTotalRetentionReleaseForMonth(m) : 0);
+    const tRetFinal = getRetentionCashForMonth(m, cur);
     const tCreditsReceived = getCreditReceivedForMonth(m);
     // Expected (forecast) small-works deposits — shown until the real deposit syncs from QB
     const tDepositExpected = getTotalExpectedDepositForMonth(m);
@@ -5017,8 +5058,8 @@ function exportForecastPDF() {
       tGrossBilling+=pb.gross;tRetHeld+=pb.ret;
     });
     const tC=tL+tM+tO,tLiab=getTotalLiabilitiesForMonth(m),tNetBilling=tGrossBilling-tRetHeld;
-    const tRetActual=getRetentionReceivedForMonth(m),tCred=getCreditReceivedForMonth(m);
-    const tRetFinal=tRetActual>0?tRetActual:(m>=cur?getTotalRetentionReleaseForMonth(m):0);
+    const tCred=getCreditReceivedForMonth(m);
+    const tRetFinal=getRetentionCashForMonth(m,cur);
     const unalloc=m<cur?(unallocatedCosts[m]||{labour:0,materials:0}):{labour:0,materials:0};
     const tCTotal=tC+(unalloc.labour||0)+(unalloc.materials||0);
     const cash=tNetBilling+tRetFinal+tCred-tCTotal-tLiab;
