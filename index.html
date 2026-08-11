@@ -253,7 +253,7 @@
     </form>
     <div class="login-error" id="login-error"></div>
     <div class="login-hint">Shared login for Stuart &amp; accountant</div>
-    <div style="margin-top:1.5rem;font-size:10px;color:#bbb;font-family:monospace">v3.09-Aug-11</div>
+    <div style="margin-top:1.5rem;font-size:10px;color:#bbb;font-family:monospace">v3.10-Aug-11</div>
   </div>
 </div>
 
@@ -295,7 +295,7 @@
         <span id="conn-dot-circle" style="width:8px;height:8px;border-radius:50%;background:#d1d5db;display:inline-block;flex-shrink:0"></span>
         <span id="conn-dot-label">Connecting</span>
       </span>
-      <div class="app-ver" title="Build version">v3.09-Aug-11</div>
+      <div class="app-ver" title="Build version">v3.10-Aug-11</div>
       <button class="btn app-signout" onclick="handleLogout()" title="Sign out">Sign out</button>
     </div>
   </aside>
@@ -1862,18 +1862,28 @@ function billRowsHtml(rows) {
     </div>`;
   }).join('');
 }
-// Drill-down for an unallocated-costs month card: every UNTAGGED bill/purchase in that month
-// (no E-number in QB). This is the tidy work-list — the exact bills to go and code to a job.
+// A DIRECT PROJECT COST = Cost-of-Sale Labour or Materials only. Everything else that carries no
+// E-number (accountancy, office/admin, plant, motor, loans, sundry, payroll, CIS-withheld) is a
+// genuine COMPANY cost, not a mis-tagged job cost — it belongs in overheads, not this tidy list.
+// classifyAccount labels any 'cis' account 'labour', so CIS lines are excluded explicitly here.
+function isDirectProjectCost(t) {
+  const a = (t.account || '').toLowerCase();
+  if (a.includes('cis withheld') || a.includes('cis suffered') || a.includes('cis control') || a.includes('cis journal')) return false;
+  return t.category === 'labour' || t.category === 'materials';
+}
+// Drill-down for an unallocated-costs month card: the UNTAGGED direct project-cost lines (Cost-of-Sale
+// Labour/Materials with no E-number in QB) for that month. This is the tidy work-list — the exact
+// project bills to go and code to a job. (Company overheads/payroll are excluded — see above.)
 function untaggedBillsDrill(month) {
-  const rows = diagTxnsFiltered(t => !t.job && (t.date || '').substring(0, 7) === month);
+  const rows = diagTxnsFiltered(t => !t.job && isDirectProjectCost(t) && (t.date || '').substring(0, 7) === month);
   if (!qbDiagnostics) return `<div class="kan-drill-note">Sync to load the bill numbers behind this.</div>`;
-  if (!rows.length) return `<div class="kan-drill-note">No line detail cached for this month (older than the sync window, or over the 600-line cap).</div>`;
+  if (!rows.length) return `<div class="kan-drill-note">No project-cost line detail cached for this month (needs a sync on v3.09+; the full sync's 600-line window may not have reached this month — a re-sync fixes it).</div>`;
   const total = rows.reduce((s, t) => s + (t.amount || 0), 0);
   const noRef = rows.some(t => !t.doc);
   return `<details class="kan-drill">
-    <summary>${rows.length} untagged line${rows.length > 1 ? 's' : ''} · ${fmt(total)} — show bills</summary>
+    <summary>${rows.length} untagged project-cost line${rows.length > 1 ? 's' : ''} · ${fmt(total)} — show bills to code to a job</summary>
     <div class="bill-list">${billRowsHtml(rows)}</div>
-    ${noRef ? '<div class="kan-drill-note">“no ref” = a QB Purchase/Expense with no document number. Re-sync after the next qbo-sync deploy to pull numbers.</div>' : ''}
+    ${noRef ? '<div class="kan-drill-note">“no ref” = a QB Purchase/Expense with no document number — identify it by vendor + date.</div>' : ''}
   </details>`;
 }
 // Drill-down for a job + month: that job's coded cost bills/purchases from QB. Complements the
