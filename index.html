@@ -237,7 +237,7 @@
     </form>
     <div class="login-error" id="login-error"></div>
     <div class="login-hint">Shared login for Stuart &amp; accountant</div>
-    <div style="margin-top:1.5rem;font-size:10px;color:#bbb;font-family:monospace">v3.06-Aug-11</div>
+    <div style="margin-top:1.5rem;font-size:10px;color:#bbb;font-family:monospace">v3.07-Aug-11</div>
   </div>
 </div>
 
@@ -279,7 +279,7 @@
         <span id="conn-dot-circle" style="width:8px;height:8px;border-radius:50%;background:#d1d5db;display:inline-block;flex-shrink:0"></span>
         <span id="conn-dot-label">Connecting</span>
       </span>
-      <div class="app-ver" title="Build version">v3.06-Aug-11</div>
+      <div class="app-ver" title="Build version">v3.07-Aug-11</div>
       <button class="btn app-signout" onclick="handleLogout()" title="Sign out">Sign out</button>
     </div>
   </aside>
@@ -2863,27 +2863,30 @@ function renderActualsSection() {
       + '</div>';
   }
 
-  // Billing recovery banner — check if billing is behind costs (threshold: 2.5%)
+  // Billing recovery banner — is WORK CERTIFIED keeping pace with cost? Compare GROSS work certified
+  // (billing + retention + CIS) against cost, NOT net billing: net billing is always behind cost by the
+  // retention/CIS held back, which can't be billed early, so a net comparison wrongly flags every job.
+  // Skip complete jobs entirely — a finished job never needs "raise a bigger application".
   const elapsedForBanner = months.filter(m => m < cur);
-  if (elapsedForBanner.length) {
-    let actCostBanner = 0, actBilBanner = 0, hasAnyActuals = false;
+  if (elapsedForBanner.length && !isJobComplete(j)) {
+    let actCostBanner = 0, actCertBanner = 0, hasAnyActuals = false;
     elapsedForBanner.forEach(m => {
       const a = j.actuals[m];
       if (a && Object.keys(a).length) {
         actCostBanner += (a.labour||0) + (a.materials||0) + (a.overhead||0);
-        actBilBanner  += a.billing || 0;
+        actCertBanner += (a.billing||0) + (a.retention||0) + (a.cis_deducted||0);   // gross work certified
         hasAnyActuals = true;
       }
     });
-    if (hasAnyActuals && actCostBanner > 0 && (actCostBanner - actBilBanner) > actCostBanner * 0.025) {
-      const shortfall = actCostBanner - actBilBanner;
+    if (hasAnyActuals && actCostBanner > 0 && (actCostBanner - actCertBanner) > actCostBanner * 0.025) {
+      const shortfall = actCostBanner - actCertBanner;
       const remainingMonths = Math.max(1, j.dur - elapsedForBanner.length);
-      const remainingContract = Math.max(0, netBillingTotal(j) - actBilBanner);
+      const remainingContract = Math.max(0, (j.contract || 0) - grossBilledToDate(j));
       const catchUpMonths = Math.min(2, remainingMonths);
       const normalMonthly = remainingContract / remainingMonths;
       const suggestedApp = normalMonthly + (shortfall / catchUpMonths);
       banners += '<div style="background:#eff6ff;border:1px solid #93c5fd;border-radius:8px;padding:10px 14px;margin-bottom:1rem;font-size:12px;color:#1d4ed8">'
-        + '<strong>📋 Billing behind costs:</strong> Received ' + fmt(actBilBanner) + ' against ' + fmt(actCostBanner) + ' costs incurred — shortfall of ' + fmt(shortfall) + '.<br>'
+        + '<strong>📋 Billing behind costs:</strong> Certified ' + fmt(actCertBanner) + ' of work against ' + fmt(actCostBanner) + ' costs incurred — shortfall of ' + fmt(shortfall) + '.<br>'
         + '<span style="color:#15803d;font-weight:600;font-size:13px">→ Suggested next application: ' + fmt(Math.max(0, suggestedApp)) + '</span>'
         + ' <span style="color:#888">(normal ' + fmt(normalMonthly) + ' + ' + fmt(shortfall / catchUpMonths) + ' catch-up over ' + catchUpMonths + ' month' + (catchUpMonths > 1 ? 's' : '') + ')</span>'
         + '</div>';
