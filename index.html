@@ -237,7 +237,7 @@
     </form>
     <div class="login-error" id="login-error"></div>
     <div class="login-hint">Shared login for Stuart &amp; accountant</div>
-    <div style="margin-top:1.5rem;font-size:10px;color:#bbb;font-family:monospace">v3.04-Aug-10</div>
+    <div style="margin-top:1.5rem;font-size:10px;color:#bbb;font-family:monospace">v3.05-Aug-11</div>
   </div>
 </div>
 
@@ -279,7 +279,7 @@
         <span id="conn-dot-circle" style="width:8px;height:8px;border-radius:50%;background:#d1d5db;display:inline-block;flex-shrink:0"></span>
         <span id="conn-dot-label">Connecting</span>
       </span>
-      <div class="app-ver" title="Build version">v3.04-Aug-10</div>
+      <div class="app-ver" title="Build version">v3.05-Aug-11</div>
       <button class="btn app-signout" onclick="handleLogout()" title="Sign out">Sign out</button>
     </div>
   </aside>
@@ -2928,6 +2928,36 @@ function renderActualsSection() {
     + '</div>'
     + '</div>';
 
+  // Retention pot — this job's held / released / outstanding + the two moieties.
+  const _retTotal = getRetentionTotal(j);
+  if (_retTotal > 0) {
+    const _half = _retTotal / 2;
+    const _rr = j.retentionReleases || {}, _ra = j.retentionInvoiceAmounts || {}, _rdt = j.retentionInvoiceDates || {};
+    const _cur = getCurrentMonth();
+    const _relAmt = k => _rr[k] ? (_ra[k] != null ? _ra[k] : _half) : 0;
+    const _released = _relAmt('m1') + _relAmt('m2');
+    const _outstanding = _retTotal - _released;
+    const _moiety = (k, mth, label) => {
+      const rel = _rr[k], due = mth && mth <= _cur && !rel;
+      const stat = rel
+        ? '<span class="badge badge-actual">Released ' + fmt(_ra[k] != null ? _ra[k] : _half) + (_rdt[k] ? ' &middot; ' + new Date(_rdt[k]).toLocaleDateString('en-GB', {day:'numeric',month:'short',year:'2-digit'}) : '') + '</span>'
+        : due ? '<span style="background:#fef9c3;color:#a16207;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:500">Due now</span>'
+              : '<span class="badge badge-forecast">Forecast &middot; ' + (mth ? monthLabel(mth) : 'TBC') + '</span>';
+      return '<div style="display:flex;justify-content:space-between;align-items:center;padding:5px 0;font-size:12px;border-top:1px solid #f0f0f0"><span style="color:#555">' + label + '<span style="color:#aaa"> &middot; ' + fmt(_half) + '</span></span><span>' + stat + '</span></div>';
+    };
+    bal += '<div class="card" style="padding:.9rem 1.1rem;margin-bottom:1rem">'
+      + '<div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:10px"><div style="font-size:13px;font-weight:600">Retention pot</div>'
+      + '<a href="#" onclick="showTab(\'retentions\');return false" style="font-size:11px;color:#2ca01c;text-decoration:none">Manage releases &rarr;</a></div>'
+      + '<div style="display:flex;gap:24px;flex-wrap:wrap;margin-bottom:6px">'
+      + '<div><div style="font-size:11px;color:#888">Held</div><div style="font-weight:700;font-size:15px">' + fmt(_retTotal) + '</div></div>'
+      + '<div><div style="font-size:11px;color:#888">Released</div><div style="font-weight:700;font-size:15px;color:#16a34a">' + fmt(_released) + '</div></div>'
+      + '<div><div style="font-size:11px;color:#888">Outstanding</div><div style="font-weight:700;font-size:15px;color:#dc2626">' + fmt(_outstanding) + '</div></div>'
+      + '</div>'
+      + _moiety('m1', getFirstMoietyMonth(j), '1st 50% &mdash; on completion')
+      + _moiety('m2', getSecondMoietyMonth(j), '2nd 50% &mdash; after ' + (j.moiety || 12) + 'm defects')
+      + '</div>';
+  }
+
   // Margin row — revenue = full work certified (income INCLUDING retention). Retention is earned income;
   // QB only defers it to accrued income to track it until it's invoiced/released, but it is still ours, so
   // it belongs in margin. CIS suffered is also income (tax withheld on our behalf, recovered from HMRC).
@@ -3847,6 +3877,7 @@ function renderRetentionsSection() {
   // Compute totals — use actual invoiced amounts where available
   let totalHeld=0, totalForecast=0, totalActualInvoiced=0, totalDue=0;
   jobs.forEach(j => {
+    if (getRetentionTotal(j) <= 0) return;   // skip jobs with no retention held
     const half = getRetentionTotal(j) / 2;
     const rr = j.retentionReleases || { m1: false, m2: false };
     const ra = j.retentionInvoiceAmounts || {};
@@ -3862,6 +3893,8 @@ function renderRetentionsSection() {
   const totalOutstanding = totalHeld - totalActualInvoiced;
   const variance = totalActualInvoiced - totalForecast;
 
+  if (totalHeld <= 0) { el.innerHTML = '<div class="empty-state">No retention is held on any live job.</div>'; return; }
+
   // Build per-month forecast vs actual table
   // Summary metrics
   let html = `
@@ -3875,6 +3908,7 @@ function renderRetentionsSection() {
   // Release schedule timeline — combined with forecast vs actual
   const timeline = [];
   jobs.forEach((j, ji) => {
+    if (getRetentionTotal(j) <= 0) return;   // skip jobs with no retention held
     const half = getRetentionTotal(j) / 2;
     const rr = j.retentionReleases || { m1: false, m2: false };
     const m1 = getFirstMoietyMonth(j);
