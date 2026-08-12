@@ -253,7 +253,7 @@
     </form>
     <div class="login-error" id="login-error"></div>
     <div class="login-hint">Shared login for Stuart &amp; accountant</div>
-    <div style="margin-top:1.5rem;font-size:10px;color:#bbb;font-family:monospace">v3.10-Aug-11</div>
+    <div style="margin-top:1.5rem;font-size:10px;color:#bbb;font-family:monospace">v3.11-Aug-11</div>
   </div>
 </div>
 
@@ -295,7 +295,7 @@
         <span id="conn-dot-circle" style="width:8px;height:8px;border-radius:50%;background:#d1d5db;display:inline-block;flex-shrink:0"></span>
         <span id="conn-dot-label">Connecting</span>
       </span>
-      <div class="app-ver" title="Build version">v3.10-Aug-11</div>
+      <div class="app-ver" title="Build version">v3.11-Aug-11</div>
       <button class="btn app-signout" onclick="handleLogout()" title="Sign out">Sign out</button>
     </div>
   </aside>
@@ -1877,7 +1877,7 @@ function isDirectProjectCost(t) {
 function untaggedBillsDrill(month) {
   const rows = diagTxnsFiltered(t => !t.job && isDirectProjectCost(t) && (t.date || '').substring(0, 7) === month);
   if (!qbDiagnostics) return `<div class="kan-drill-note">Sync to load the bill numbers behind this.</div>`;
-  if (!rows.length) return `<div class="kan-drill-note">No project-cost line detail cached for this month (needs a sync on v3.09+; the full sync's 600-line window may not have reached this month — a re-sync fixes it).</div>`;
+  if (!rows.length) return `<div class="kan-drill-note">No project-cost line detail cached for this month yet — run a Full resync, then hard-refresh (Ctrl+F5), to load it.</div>`;
   const total = rows.reduce((s, t) => s + (t.amount || 0), 0);
   const noRef = rows.some(t => !t.doc);
   return `<details class="kan-drill">
