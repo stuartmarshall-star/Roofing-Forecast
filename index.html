@@ -131,6 +131,22 @@
   .bill-acc { grid-area: acc; color: #888; font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .bill-amt { grid-area: amt; text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; color: #1a1a1a; }
   .bill-date { grid-area: date; text-align: right; color: #aaa; font-size: 11px; font-variant-numeric: tabular-nums; }
+  /* Unallocated tidy-up rules panel */
+  .rule-list { margin: 8px 0 4px; }
+  .rule-row { display: flex; align-items: center; gap: 8px; padding: 6px 0; border-top: 1px solid #f2f2f2; font-size: 12.5px; }
+  .rule-row:first-child { border-top: none; }
+  .rule-match { color: #1a1a1a; }
+  .rule-match b { text-transform: capitalize; color: #555; font-weight: 600; }
+  .rule-arrow { color: #bbb; }
+  .rule-act { font-weight: 700; font-size: 11.5px; padding: 1px 7px; border-radius: 10px; white-space: nowrap; }
+  .rule-ignore { background: #eef1f4; color: #5b6b7b; }
+  .rule-allocate { background: #e4f4ec; color: #0f7b4f; }
+  .rule-overhead { background: #fdf1d6; color: #9a6b00; }
+  .rule-del { margin-left: auto; border: none; background: transparent; color: #c0392b; font-size: 16px; line-height: 1; cursor: pointer; padding: 0 4px; }
+  .rule-del:hover { color: #7d2018; }
+  .rule-add { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 8px; padding-top: 8px; border-top: 1px solid #eee; }
+  .rule-inp { font: inherit; font-size: 12.5px; padding: 5px 7px; border: 1px solid #e0e0e0; border-radius: 6px; background: #fff; }
+  .rule-val { flex: 1 1 120px; min-width: 100px; }
   /* Actions Centre — secondary page menu (mirrors the main dark sidebar) + one category at a time */
   .ac-layout { display: flex; gap: 22px; align-items: flex-start; }
   .ac-menu { flex: 0 0 212px; display: flex; flex-direction: column; gap: 2px; position: sticky; top: 16px;
@@ -253,7 +269,7 @@
     </form>
     <div class="login-error" id="login-error"></div>
     <div class="login-hint">Shared login for Stuart &amp; accountant</div>
-    <div style="margin-top:1.5rem;font-size:10px;color:#bbb;font-family:monospace">v3.13-Aug-14</div>
+    <div style="margin-top:1.5rem;font-size:10px;color:#bbb;font-family:monospace">v3.14-Aug-14</div>
   </div>
 </div>
 
@@ -295,7 +311,7 @@
         <span id="conn-dot-circle" style="width:8px;height:8px;border-radius:50%;background:#d1d5db;display:inline-block;flex-shrink:0"></span>
         <span id="conn-dot-label">Connecting</span>
       </span>
-      <div class="app-ver" title="Build version">v3.13-Aug-14</div>
+      <div class="app-ver" title="Build version">v3.14-Aug-14</div>
       <button class="btn app-signout" onclick="handleLogout()" title="Sign out">Sign out</button>
     </div>
   </aside>
@@ -728,6 +744,7 @@ let unallocatedCosts = {}; // { [month]: { labour, materials } } — from QB bil
 let vatInput = {}; // { [month]: input_vat } — company-level input VAT paid on purchases (from QB bill tax)
 let cisWithheld = {}; // { [month]: cis_withheld } — company-level CIS deducted from subbie labour (from QB), paid to HMRC ~22nd of following month
 let qbDiagnostics = null; // last QB sync's read-only diagnostics payload (for the QB Data page)
+let unallocRules = []; // unallocated tidy-up rules: [{id,match_type,match_value,action,target_enum,note}] — applied by the sync
 let editCreditIdx = null;
 let editIdx = null;
 let editLiabIdx = null;
@@ -855,17 +872,19 @@ function setSaving(msg) { document.getElementById('saving-indicator').textConten
 async function loadJobs() {
   setStatus('connecting', 'Connecting to your database...');
   try {
-    const [jobData, liabData, creditData, unallocData, vatData, cisData] = await Promise.all([
+    const [jobData, liabData, creditData, unallocData, vatData, cisData, rulesData] = await Promise.all([
       sbFetch('jobs?select=*&order=created_at.asc'),
       sbFetch('liabilities?select=*&order=created_at.asc').catch(() => []),
       sbFetch('credits?select=*&order=created_at.asc').catch(() => []),
       sbFetch('unallocated_costs?select=*').catch(() => []),
       sbFetch('vat_input_monthly?select=*').catch(() => []),
-      sbFetch('cis_withheld_monthly?select=*').catch(() => [])
+      sbFetch('cis_withheld_monthly?select=*').catch(() => []),
+      sbFetch('unallocated_rules?select=*&order=created_at.asc').catch(() => [])
     ]);
     jobs = jobData.map(dbToJob);
     liabilities = liabData.map(dbToLiab);
     credits = creditData.map(dbToCredit);
+    unallocRules = rulesData || [];
     // Build unallocatedCosts lookup by month
     unallocatedCosts = {};
     (unallocData || []).forEach(r => {
@@ -1875,7 +1894,7 @@ function isDirectProjectCost(t) {
 // Labour/Materials with no E-number in QB) for that month. This is the tidy work-list — the exact
 // project bills to go and code to a job. (Company overheads/payroll are excluded — see above.)
 function untaggedBillsDrill(month) {
-  const rows = diagTxnsFiltered(t => !t.job && isDirectProjectCost(t) && (t.date || '').substring(0, 7) === month);
+  const rows = diagTxnsFiltered(t => !t.job && isDirectProjectCost(t) && !unallocRuleFor(t) && (t.date || '').substring(0, 7) === month);
   if (!qbDiagnostics) return `<div class="kan-drill-note">Sync to load the bill numbers behind this.</div>`;
   if (!rows.length) return `<div class="kan-drill-note">No project-cost line detail cached for this month yet — run a Full resync, then hard-refresh (Ctrl+F5), to load it.</div>`;
   const total = rows.reduce((s, t) => s + (t.amount || 0), 0);
@@ -1898,6 +1917,65 @@ function jobBillsDrill(eNum, month) {
     <summary>${rows.length} cost line${rows.length > 1 ? 's' : ''} · ${fmt(total)} — show bills</summary>
     <div class="bill-list">${billRowsHtml(rows)}</div>
   </details>`;
+}
+
+// ── Unallocated tidy-up rules (app-side) ─────────────────────────────────────
+function escHtml(s){ return String(s==null?'':s).replace(/[<>&"]/g,c=>({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;'}[c])); }
+// Client mirror of the sync's matcher — used to hide lines already covered by a rule from the tidy list.
+function unallocRuleFor(t){
+  const v=(t.vendor||'').toLowerCase(), a=(t.account||'').toLowerCase(), d=(t.doc||'');
+  for(const r of unallocRules){ const mv=(r.match_value||'').toLowerCase(); if(!mv) continue;
+    if(r.match_type==='vendor'  && v.includes(mv)) return r;
+    if(r.match_type==='account' && a.includes(mv)) return r;
+    if(r.match_type==='doc'     && d===r.match_value) return r;
+  } // 'sku' rules can't preview (the cached diagnostics carry no item field) — they apply on the next sync.
+  return null;
+}
+async function addUnallocRule(match_type, match_value, action, target_enum){
+  match_value=(match_value||'').trim();
+  if(!match_value){ alert('Enter what to match on (supplier / account / item / doc number).'); return; }
+  if(action==='allocate'){ target_enum=(target_enum||'').trim().toUpperCase();
+    if(!/^E\d+/.test(target_enum)){ alert('“Allocate to job” needs a job E-number, e.g. E1543.'); return; }
+  } else { target_enum=null; }
+  try{
+    await sbFetch('unallocated_rules', { method:'POST', body: JSON.stringify({ match_type, match_value, action, target_enum }) });
+    unallocRules = await sbFetch('unallocated_rules?select=*&order=created_at.asc');
+    renderSummary();
+  }catch(e){ alert('Could not save rule: '+(e.message||e)); }
+}
+async function deleteUnallocRule(id){
+  try{
+    await sbFetch('unallocated_rules?id=eq.'+id, { method:'DELETE' });
+    unallocRules = unallocRules.filter(r=>r.id!==id);
+    renderSummary();
+  }catch(e){ alert('Could not delete rule: '+(e.message||e)); }
+}
+// Quick action from a supplier/account chip in the drill: prefill + add a rule in one go.
+function quickRule(type, value, action){
+  if(action==='allocate'){ const t=prompt('Allocate all “'+value+'” to which job E-number?','E'); if(!t) return; addUnallocRule(type,value,'allocate',t); }
+  else addUnallocRule(type, value, action);
+}
+function tidyupRulesPanel(){
+  const actLabel = a => a==='ignore'?'Ignore':a==='allocate'?'Allocate':'Overhead';
+  const rows = unallocRules.length ? unallocRules.map(r =>
+    `<div class="rule-row">
+       <span class="rule-match"><b>${r.match_type}</b> contains “${escHtml(r.match_value)}”</span>
+       <span class="rule-arrow">→</span>
+       <span class="rule-act rule-${r.action}">${actLabel(r.action)}${r.action==='allocate'?' '+escHtml(r.target_enum||''):''}</span>
+       <button class="rule-del" title="Delete rule" onclick="deleteUnallocRule('${r.id}')">×</button>
+     </div>`).join('') : `<div class="kan-drill-note">No rules yet. Add one below (or use the ⋯ buttons on a supplier in the list). Rules re-apply on every sync.</div>`;
+  return `<div class="kan-card" style="border-left-color:#2563eb">
+    <div class="kan-card-title">🧹 Tidy-up rules</div>
+    <div class="kan-card-sub" style="margin-top:2px">Sort untagged costs once — each rule re-applies automatically on every sync. <b>Run a sync to see the effect.</b></div>
+    <div class="rule-list">${rows}</div>
+    <div class="rule-add">
+      <select id="tr-type" class="rule-inp"><option value="vendor">Supplier</option><option value="account">Account</option><option value="sku">Item / SKU</option><option value="doc">Doc no.</option></select>
+      <input id="tr-val" class="rule-inp rule-val" placeholder="contains…">
+      <select id="tr-act" class="rule-inp" onchange="var t=document.getElementById('tr-target');t.style.display=this.value==='allocate'?'':'none'"><option value="ignore">Ignore</option><option value="allocate">Allocate to job</option><option value="overhead">Overhead</option></select>
+      <input id="tr-target" class="rule-inp" placeholder="E1543" style="display:none;width:84px">
+      <button class="btn btn-sm" onclick="addUnallocRule(document.getElementById('tr-type').value, document.getElementById('tr-val').value, document.getElementById('tr-act').value, document.getElementById('tr-target').value)">Add</button>
+    </div>
+  </div>`;
 }
 
 function renderSummary() {
@@ -2063,6 +2141,8 @@ function renderSummary() {
       ${untaggedBillsDrill(m)}
     </div>`;
   });
+  // Tidy-up rules panel sits at the top of the Unallocated column (global, above the per-month cards).
+  unallocCards.unshift(tidyupRulesPanel());
 
   const upcomingCard = u => {
     const isEnd = u.type === 'ending';
@@ -3538,7 +3618,7 @@ function renderForecastSection() {
   const rows = allMonths.map(m => {
     const mPrev  = prevMonth(m);
     const mPrev2 = prevMonth(mPrev);
-    let tL=0, tM=0, tO=0, tGrossBilling=0, tRetHeld=0, tOutputVat=0;
+    let tL=0, tM=0, tO=0, tGrossBilling=0, tRetHeld=0, tOutputVat=0, tSubbieRetHeld=0;
     jobs.forEach(j => {
       const ms = getEffectiveMonths(j);
       // Has QBO data = has at least one month of actuals entered
@@ -3552,6 +3632,9 @@ function renderForecastSection() {
       if (ms.includes(m)) {
         tL += buildSchedule(j,'labour')[m]?.value || 0;
         tO += buildSchedule(j,'overhead')[m]?.value || 0;
+        // Subbie retention HELD this month (actual). Job labour above is gross; this is held out of
+        // cash below (subbie paid net now; the retention leaves later on the release bill).
+        if (m <= cur) tSubbieRetHeld += (j.actuals[m] && j.actuals[m].subbie_retention) || 0;
       }
       // Materials: always lag 1 month (paid on 30-day account regardless of QBO sync)
       if (ms.includes(mPrev)) tM += buildSchedule(j,'materials')[mPrev]?.value || 0;
@@ -3601,10 +3684,10 @@ function renderForecastSection() {
     // Actual from QB (job + unallocated combined) for past/current; ~20% of forecast labour ahead.
     const tCisWithheld = (m <= cur) ? (cisWithheld[m] || 0) : (0.20 * (tL + tUnallocLabour));
     // Cash: VAT collected in, VAT paid out; the monthly settlement (added in the pass below) reverses the net.
-    // Subbie retention needs no term here — the subbie's tagged labour line is already net of retention,
-    // so job labour = net = what's paid now; the retention comes back out as its own cash-out on the release bill.
-    const cash = tNetBilling + tOutputVat + tRetFinal + tCreditsReceived + tDepositExpected - tCTotal - tInputVat - tLiab;
-    return {m, tL, tM, tO, tC, tCTotal, tGrossBilling, tRetHeld, tNetBilling, tLiab, tRetFinal, tCreditsReceived, tDepositExpected, tOutputVat, tInputVat, vatSettlement: 0, tCisWithheld, cisRemit: 0, cash, tUnallocLabour, tUnallocMaterials};
+    // Subbie retention HELD is added back (job labour is gross but the subbie is paid net now; the retention
+    // leaves later on the release bill). Cost/margin keep gross (tCTotal unchanged) — a cash-timing shift, like CIS.
+    const cash = tNetBilling + tOutputVat + tRetFinal + tCreditsReceived + tDepositExpected - tCTotal - tInputVat - tLiab + tSubbieRetHeld;
+    return {m, tL, tM, tO, tC, tCTotal, tGrossBilling, tRetHeld, tNetBilling, tLiab, tRetFinal, tCreditsReceived, tDepositExpected, tOutputVat, tInputVat, vatSettlement: 0, tCisWithheld, cisRemit: 0, cash, tUnallocLabour, tUnallocMaterials, tSubbieRetHeld};
   });
 
   // VAT settlement (monthly): the net VAT for the prior period (input − output) is reclaimed/paid
