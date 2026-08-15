@@ -147,6 +147,18 @@
   .rule-add { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 8px; padding-top: 8px; border-top: 1px solid #eee; }
   .rule-inp { font: inherit; font-size: 12.5px; padding: 5px 7px; border: 1px solid #e0e0e0; border-radius: 6px; background: #fff; }
   .rule-val { flex: 1 1 120px; min-width: 100px; }
+  .rule-adv { margin-top: 8px; }
+  .rule-adv > summary { cursor: pointer; font-size: 11.5px; color: #888; list-style: none; }
+  .rule-adv > summary::-webkit-details-marker { display: none; }
+  .rule-adv > summary::before { content: "▸ "; }
+  .rule-adv[open] > summary::before { content: "▾ "; }
+  /* line-by-line batch bar + row checkboxes */
+  .tidy-batch { display: flex; align-items: center; gap: 8px; margin: 8px 0 4px; padding: 7px 9px; border-radius: 8px; background: #f0f3f7; opacity: .55; transition: opacity .12s; }
+  .tidy-batch.has-sel { opacity: 1; background: #e6effa; }
+  .tidy-batch .tidy-sel { font-size: 12.5px; color: #435066; margin-right: auto; }
+  .tidy-batch .tidy-sel b { color: #1256a3; }
+  .bill-row-tidy { grid-template-columns: 22px 62px 1fr auto; grid-template-areas: "chk doc ven amt" "chk doc acc date"; }
+  .bill-chk { grid-area: chk; align-self: center; width: 16px; height: 16px; cursor: pointer; margin: 0; }
   /* Actions Centre — secondary page menu (mirrors the main dark sidebar) + one category at a time */
   .ac-layout { display: flex; gap: 22px; align-items: flex-start; }
   .ac-menu { flex: 0 0 212px; display: flex; flex-direction: column; gap: 2px; position: sticky; top: 16px;
@@ -269,7 +281,7 @@
     </form>
     <div class="login-error" id="login-error"></div>
     <div class="login-hint">Shared login for Stuart &amp; accountant</div>
-    <div style="margin-top:1.5rem;font-size:10px;color:#bbb;font-family:monospace">v3.14-Aug-14</div>
+    <div style="margin-top:1.5rem;font-size:10px;color:#bbb;font-family:monospace">v3.15-Aug-14</div>
   </div>
 </div>
 
@@ -311,7 +323,7 @@
         <span id="conn-dot-circle" style="width:8px;height:8px;border-radius:50%;background:#d1d5db;display:inline-block;flex-shrink:0"></span>
         <span id="conn-dot-label">Connecting</span>
       </span>
-      <div class="app-ver" title="Build version">v3.14-Aug-14</div>
+      <div class="app-ver" title="Build version">v3.15-Aug-14</div>
       <button class="btn app-signout" onclick="handleLogout()" title="Sign out">Sign out</button>
     </div>
   </aside>
@@ -745,6 +757,7 @@ let vatInput = {}; // { [month]: input_vat } — company-level input VAT paid on
 let cisWithheld = {}; // { [month]: cis_withheld } — company-level CIS deducted from subbie labour (from QB), paid to HMRC ~22nd of following month
 let qbDiagnostics = null; // last QB sync's read-only diagnostics payload (for the QB Data page)
 let unallocRules = []; // unallocated tidy-up rules: [{id,match_type,match_value,action,target_enum,note}] — applied by the sync
+let tidySel = new Set(); // line signatures currently ticked in the line-by-line tidy tool (transient)
 let editCreditIdx = null;
 let editIdx = null;
 let editLiabIdx = null;
@@ -1865,14 +1878,23 @@ function diagTxnsFiltered(pred) {
   const txns = (qbDiagnostics && qbDiagnostics.transactions) || [];
   return txns.filter(pred);
 }
-function billRowsHtml(rows) {
+// Per-line signature the sync matches on for a 'line' rule — MUST equal the sync's formula
+// (doc | account | amount(2dp) | month). Lets the line-by-line tool target one exact line.
+function tidyLineSig(t) {
+  return (t.doc || '') + '|' + (t.account || '') + '|' + Number(t.amount || 0).toFixed(2) + '|' + (t.date || '').substring(0, 7);
+}
+function billRowsHtml(rows, opts) {
   if (!rows.length) return '';
+  const tidy = !!(opts && opts.tidy);
   // Newest first, then by size so the biggest lines to chase are at the top.
   const sorted = rows.slice().sort((a, b) => (b.date || '').localeCompare(a.date || '') || (b.amount || 0) - (a.amount || 0));
   return sorted.map(t => {
     const doc = t.doc ? '#' + t.doc : '<span style="color:#bbb">no ref</span>';
     const d = t.date ? new Date(t.date).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' }) : '';
-    return `<div class="bill-row">
+    const sig = tidyLineSig(t);
+    const chk = tidy ? `<input type="checkbox" class="bill-chk" data-sig="${escHtml(sig)}" ${tidySel.has(sig) ? 'checked' : ''} onclick="toggleTidySel(this.dataset.sig,this.checked)">` : '';
+    return `<div class="bill-row${tidy ? ' bill-row-tidy' : ''}">
+      ${chk}
       <span class="bill-doc">${doc}</span>
       <span class="bill-ven" title="${(t.vendor||'').replace(/"/g,'&quot;')}">${t.vendor || '—'}</span>
       <span class="bill-acc">${t.account || ''}${t.type === 'Purchase' ? ' · card/bank' : ''}</span>
@@ -1900,8 +1922,8 @@ function untaggedBillsDrill(month) {
   const total = rows.reduce((s, t) => s + (t.amount || 0), 0);
   const noRef = rows.some(t => !t.doc);
   return `<details class="kan-drill">
-    <summary>${rows.length} untagged project-cost line${rows.length > 1 ? 's' : ''} · ${fmt(total)} — show bills to code to a job</summary>
-    <div class="bill-list">${billRowsHtml(rows)}</div>
+    <summary>${rows.length} untagged project-cost line${rows.length > 1 ? 's' : ''} · ${fmt(total)} — tick lines to sort</summary>
+    <div class="bill-list">${billRowsHtml(rows, { tidy: true })}</div>
     ${noRef ? '<div class="kan-drill-note">“no ref” = a QB Purchase/Expense with no document number — identify it by vendor + date.</div>' : ''}
   </details>`;
 }
@@ -1955,26 +1977,59 @@ function quickRule(type, value, action){
   if(action==='allocate'){ const t=prompt('Allocate all “'+value+'” to which job E-number?','E'); if(!t) return; addUnallocRule(type,value,'allocate',t); }
   else addUnallocRule(type, value, action);
 }
+// Line-by-line selection: tick lines in the drill, then batch-action the selected ones.
+function toggleTidySel(sig, on){
+  if(on) tidySel.add(sig); else tidySel.delete(sig);
+  const c = document.getElementById('tidy-sel-count'); if(c) c.textContent = tidySel.size;
+  const bar = document.getElementById('tidy-batch-bar'); if(bar) bar.classList.toggle('has-sel', tidySel.size>0);
+}
+async function tidyBatch(action){
+  if(!tidySel.size){ alert('Tick some lines first (open a month below and use the checkboxes).'); return; }
+  let target = null;
+  if(action==='allocate'){
+    target = (prompt('Allocate the '+tidySel.size+' selected line'+(tidySel.size>1?'s':'')+' to which job E-number?','E')||'').trim().toUpperCase();
+    if(!/^E\d+/.test(target)){ if(target) alert('Need a job E-number, e.g. E1543.'); return; }
+  }
+  const rows = [...tidySel].map(sig => ({ match_type:'line', match_value:sig, action, target_enum: action==='allocate'?target:null }));
+  try{
+    await sbFetch('unallocated_rules', { method:'POST', body: JSON.stringify(rows) });
+    unallocRules = await sbFetch('unallocated_rules?select=*&order=created_at.asc');
+    tidySel.clear();
+    renderSummary();
+  }catch(e){ alert('Could not save: '+(e.message||e)); }
+}
 function tidyupRulesPanel(){
   const actLabel = a => a==='ignore'?'Ignore':a==='allocate'?'Allocate':'Overhead';
+  const fmtMatch = r => {
+    if(r.match_type==='line'){ const p=(r.match_value||'').split('|'); return 'line '+(p[0]?'#'+escHtml(p[0]):'(no ref)')+(p[2]?' · £'+escHtml(p[2]):'')+(p[3]?' · '+escHtml(p[3]):''); }
+    return '<b>'+escHtml(r.match_type)+'</b> contains “'+escHtml(r.match_value)+'”';
+  };
   const rows = unallocRules.length ? unallocRules.map(r =>
     `<div class="rule-row">
-       <span class="rule-match"><b>${r.match_type}</b> contains “${escHtml(r.match_value)}”</span>
+       <span class="rule-match">${fmtMatch(r)}</span>
        <span class="rule-arrow">→</span>
        <span class="rule-act rule-${r.action}">${actLabel(r.action)}${r.action==='allocate'?' '+escHtml(r.target_enum||''):''}</span>
        <button class="rule-del" title="Delete rule" onclick="deleteUnallocRule('${r.id}')">×</button>
-     </div>`).join('') : `<div class="kan-drill-note">No rules yet. Add one below (or use the ⋯ buttons on a supplier in the list). Rules re-apply on every sync.</div>`;
+     </div>`).join('') : `<div class="kan-drill-note">Nothing sorted yet. Open a month below, tick the lines you mean, then use the buttons here.</div>`;
   return `<div class="kan-card" style="border-left-color:#2563eb">
-    <div class="kan-card-title">🧹 Tidy-up rules</div>
-    <div class="kan-card-sub" style="margin-top:2px">Sort untagged costs once — each rule re-applies automatically on every sync. <b>Run a sync to see the effect.</b></div>
-    <div class="rule-list">${rows}</div>
-    <div class="rule-add">
-      <select id="tr-type" class="rule-inp"><option value="vendor">Supplier</option><option value="account">Account</option><option value="sku">Item / SKU</option><option value="doc">Doc no.</option></select>
-      <input id="tr-val" class="rule-inp rule-val" placeholder="contains…">
-      <select id="tr-act" class="rule-inp" onchange="var t=document.getElementById('tr-target');t.style.display=this.value==='allocate'?'':'none'"><option value="ignore">Ignore</option><option value="allocate">Allocate to job</option><option value="overhead">Overhead</option></select>
-      <input id="tr-target" class="rule-inp" placeholder="E1543" style="display:none;width:84px">
-      <button class="btn btn-sm" onclick="addUnallocRule(document.getElementById('tr-type').value, document.getElementById('tr-val').value, document.getElementById('tr-act').value, document.getElementById('tr-target').value)">Add</button>
+    <div class="kan-card-title">🧹 Sort unallocated costs</div>
+    <div class="kan-card-sub" style="margin-top:2px">Open a month below, <b>tick the lines</b> you want to sort, then apply. Decisions stick on every sync.</div>
+    <div class="tidy-batch${tidySel.size>0?' has-sel':''}" id="tidy-batch-bar">
+      <span class="tidy-sel"><b id="tidy-sel-count">${tidySel.size}</b> selected</span>
+      <button class="btn btn-sm" onclick="tidyBatch('ignore')">Ignore</button>
+      <button class="btn btn-sm" onclick="tidyBatch('allocate')">→ Job</button>
+      <button class="btn btn-sm" onclick="tidyBatch('overhead')">Overhead</button>
     </div>
+    <div class="rule-list">${rows}</div>
+    <details class="rule-adv"><summary>Advanced — one rule for ALL lines from a supplier / account</summary>
+      <div class="rule-add">
+        <select id="tr-type" class="rule-inp"><option value="vendor">Supplier</option><option value="account">Account</option><option value="sku">Item / SKU</option><option value="doc">Doc no.</option></select>
+        <input id="tr-val" class="rule-inp rule-val" placeholder="contains…">
+        <select id="tr-act" class="rule-inp" onchange="var t=document.getElementById('tr-target');t.style.display=this.value==='allocate'?'':'none'"><option value="ignore">Ignore</option><option value="allocate">Allocate to job</option><option value="overhead">Overhead</option></select>
+        <input id="tr-target" class="rule-inp" placeholder="E1543" style="display:none;width:84px">
+        <button class="btn btn-sm" onclick="addUnallocRule(document.getElementById('tr-type').value, document.getElementById('tr-val').value, document.getElementById('tr-act').value, document.getElementById('tr-target').value)">Add</button>
+      </div>
+    </details>
   </div>`;
 }
 
