@@ -253,7 +253,7 @@
     </form>
     <div class="login-error" id="login-error"></div>
     <div class="login-hint">Shared login for Stuart &amp; accountant</div>
-    <div style="margin-top:1.5rem;font-size:10px;color:#bbb;font-family:monospace">v3.12-Aug-11</div>
+    <div style="margin-top:1.5rem;font-size:10px;color:#bbb;font-family:monospace">v3.13-Aug-14</div>
   </div>
 </div>
 
@@ -295,7 +295,7 @@
         <span id="conn-dot-circle" style="width:8px;height:8px;border-radius:50%;background:#d1d5db;display:inline-block;flex-shrink:0"></span>
         <span id="conn-dot-label">Connecting</span>
       </span>
-      <div class="app-ver" title="Build version">v3.12-Aug-11</div>
+      <div class="app-ver" title="Build version">v3.13-Aug-14</div>
       <button class="btn app-signout" onclick="handleLogout()" title="Sign out">Sign out</button>
     </div>
   </aside>
@@ -3538,7 +3538,7 @@ function renderForecastSection() {
   const rows = allMonths.map(m => {
     const mPrev  = prevMonth(m);
     const mPrev2 = prevMonth(mPrev);
-    let tL=0, tM=0, tO=0, tGrossBilling=0, tRetHeld=0, tOutputVat=0, tSubbieRetHeld=0;
+    let tL=0, tM=0, tO=0, tGrossBilling=0, tRetHeld=0, tOutputVat=0;
     jobs.forEach(j => {
       const ms = getEffectiveMonths(j);
       // Has QBO data = has at least one month of actuals entered
@@ -3552,9 +3552,6 @@ function renderForecastSection() {
       if (ms.includes(m)) {
         tL += buildSchedule(j,'labour')[m]?.value || 0;
         tO += buildSchedule(j,'overhead')[m]?.value || 0;
-        // Subbie retention HELD this month (actual, in-month with labour). Labour above is gross;
-        // this is held back from cash below (subbie paid net now, retention paid on the release bill).
-        if (m <= cur) tSubbieRetHeld += (j.actuals[m] && j.actuals[m].subbie_retention) || 0;
       }
       // Materials: always lag 1 month (paid on 30-day account regardless of QBO sync)
       if (ms.includes(mPrev)) tM += buildSchedule(j,'materials')[mPrev]?.value || 0;
@@ -3604,10 +3601,10 @@ function renderForecastSection() {
     // Actual from QB (job + unallocated combined) for past/current; ~20% of forecast labour ahead.
     const tCisWithheld = (m <= cur) ? (cisWithheld[m] || 0) : (0.20 * (tL + tUnallocLabour));
     // Cash: VAT collected in, VAT paid out; the monthly settlement (added in the pass below) reverses the net.
-    // Subbie retention HELD is added back (subbie paid net now; the retention leaves later on the release
-    // bill). Cost/margin still see gross labour (tCTotal unchanged) — a cash-timing shift, like CIS withheld.
-    const cash = tNetBilling + tOutputVat + tRetFinal + tCreditsReceived + tDepositExpected - tCTotal - tInputVat - tLiab + tSubbieRetHeld;
-    return {m, tL, tM, tO, tC, tCTotal, tGrossBilling, tRetHeld, tNetBilling, tLiab, tRetFinal, tCreditsReceived, tDepositExpected, tOutputVat, tInputVat, vatSettlement: 0, tCisWithheld, cisRemit: 0, cash, tUnallocLabour, tUnallocMaterials, tSubbieRetHeld};
+    // Subbie retention needs no term here — the subbie's tagged labour line is already net of retention,
+    // so job labour = net = what's paid now; the retention comes back out as its own cash-out on the release bill.
+    const cash = tNetBilling + tOutputVat + tRetFinal + tCreditsReceived + tDepositExpected - tCTotal - tInputVat - tLiab;
+    return {m, tL, tM, tO, tC, tCTotal, tGrossBilling, tRetHeld, tNetBilling, tLiab, tRetFinal, tCreditsReceived, tDepositExpected, tOutputVat, tInputVat, vatSettlement: 0, tCisWithheld, cisRemit: 0, cash, tUnallocLabour, tUnallocMaterials};
   });
 
   // VAT settlement (monthly): the net VAT for the prior period (input − output) is reclaimed/paid
